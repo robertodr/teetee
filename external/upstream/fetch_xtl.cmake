@@ -17,6 +17,5 @@ else()
       https://github.com/QuantStack/xtl/archive/${xtl_pinned}.zip
     )
 
-  set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(xtl)
 endif()

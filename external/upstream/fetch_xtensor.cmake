@@ -17,10 +17,9 @@ else()
       https://github.com/QuantStack/xtensor/archive/${xtensor_pinned}.zip
     )
 
-  set(XTENSOR_USE_XSIMD ON CACHE BOOL "" FORCE)
-  set(XTENSOR_USE_OPENMP ON CACHE BOOL "" FORCE)
   set(xtl_DIR ${FETCHCONTENT_BASE_DIR}/xtl-build CACHE STRING "" FORCE)
   set(xsimd_DIR ${FETCHCONTENT_BASE_DIR}/xsimd-build CACHE STRING "" FORCE)
+  set(XTENSOR_USE_XSIMD ON CACHE BOOL "" FORCE)
   set(CPP17 ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(xtensor)
 endif()
