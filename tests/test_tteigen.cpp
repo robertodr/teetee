@@ -35,7 +35,49 @@ template <typename T> Eigen::Tensor<T, 6> to_full(const tteigen::TensorTrain<T, 
     return full;
 }
 
-TEST_CASE("TT-SVD with Eigen", "[tt-svd][eigen]") {
+TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
+    Eigen::Tensor<double, 3> A(3, 4, 2);
+
+    auto v = 1.0;
+    for (auto k = 0; k < A.dimension(2); ++k) {
+        for (auto j = 0; j < A.dimension(1); ++j) {
+            for (auto i = 0; i < A.dimension(0); ++i) {
+                A(i, j, k) = v;
+                v += 1.0;
+            }
+        }
+    }
+
+    SECTION("horizontal (mode-0) unfolding") {
+        const auto unfold = tteigen::H_unfold(A);
+
+        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(0), A.size() / A.dimension(0));
+
+        REQUIRE(unfold.isApprox(ref));
+    }
+
+    SECTION("mode-1 unfolding") {
+        const auto unfold = tteigen::unfold(1, A);
+
+        std::cout << "mode-1\n" << unfold << std::endl;
+
+        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(1), A.size() / A.dimension(1));
+
+        REQUIRE(unfold.isApprox(ref));
+    }
+
+    SECTION("vertical (mode-2) unfolding") {
+        const auto unfold = tteigen::V_unfold(A);
+
+        std::cout << "mode-2\n" << unfold << std::endl;
+
+        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(2), A.size() / A.dimension(2));
+
+        REQUIRE(unfold.isApprox(ref));
+    }
+}
+
+TEST_CASE("Eigen :: tensor train format", "[tt][eigen]") {
     auto A = tteigen::sample_tensor();
 
     // norm of tensor --> gives us the threshold for the SVDs
@@ -45,52 +87,48 @@ TEST_CASE("TT-SVD with Eigen", "[tt-svd][eigen]") {
     const auto epsilon = 1.0e-12;
     auto tt_A = tteigen::tt_svd(A, epsilon);
 
-    // the reconstructed tensor
-    Eigen::Tensor<double, 6> check = to_full(tt_A);
+    SECTION("decomposition") {
+        // the reconstructed tensor
+        Eigen::Tensor<double, 6> check = to_full(tt_A);
 
-    Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
-    const double check_norm = tmp.coeff();
+        Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
+        const double check_norm = tmp.coeff();
 
-    REQUIRE(check_norm == Approx(A_F));
+        REQUIRE(check_norm == Approx(A_F));
+    }
+
+    SECTION("multiplication by a scalar from the left") {
+        // the reconstructed tensor
+        Eigen::Tensor<double, 6> check = to_full(2.5 * tt_A);
+
+        Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
+        const double check_norm = tmp.coeff();
+
+        REQUIRE(check_norm == Approx(2.5 * A_F));
+    }
+
+    SECTION("multiplication by a scalar from the right") {
+        // the reconstructed tensor
+        Eigen::Tensor<double, 6> check = to_full(tt_A * 2.5);
+
+        Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
+        const double check_norm = tmp.coeff();
+
+        REQUIRE(check_norm == Approx(2.5 * A_F));
+    }
+
+    SECTION("sum of two tensor trains, without rounding") {
+        // the reconstructed tensor
+        Eigen::Tensor<double, 6> check = to_full(tt_A + tt_A);
+
+        Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
+        const double check_norm = tmp.coeff();
+
+        REQUIRE(check_norm == Approx(2.0 * A_F));
+    }
 }
 
 /*
-// scalar times TT
-checkA = to_full(2.5 * tt);
-foo = (2.5 * A - checkA).square().sum().sqrt();
-check_norm = foo.coeff();
-std::cout << "CHECK: scalar times TT" << std::endl;
-std::cout << "Norm of difference = " << check_norm << std::endl;
-if (std::abs(check_norm) >= 2.5 * epsilon * A_F) {
-    std::cout << "TT format not within tolerance!" << std::endl;
-} else {
-    std::cout << "All good!" << std::endl;
-}
-
-// TT times scalar
-checkA = to_full(tt * 2.5);
-foo = (2.5 * A - checkA).square().sum().sqrt();
-check_norm = foo.coeff();
-std::cout << "CHECK: TT times scalar" << std::endl;
-std::cout << "Norm of difference = " << check_norm << std::endl;
-if (std::abs(check_norm) >= 2.5 * epsilon * A_F) {
-    std::cout << "TT format not within tolerance!" << std::endl;
-} else {
-    std::cout << "All good!" << std::endl;
-}
-
-// sum of two tensors
-checkA = to_full(tt + tt);
-foo = (2.0 * A - checkA).square().sum().sqrt();
-check_norm = foo.coeff();
-std::cout << "CHECK: TT plus TT (no rounding)" << std::endl;
-std::cout << "Norm of difference = " << check_norm << std::endl;
-if (std::abs(check_norm) >= 2.0 * epsilon * A_F) {
-    std::cout << "TT format not within tolerance!" << std::endl;
-} else {
-    std::cout << "All good!" << std::endl;
-}
-
 // Hadamard product of two tensors
 checkA = to_full(hadamard_product(tt, tt));
 foo = ((A * A) - checkA).square().sum().sqrt();

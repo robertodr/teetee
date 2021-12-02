@@ -65,7 +65,7 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
     // 1. Copy input tensor to temporary B
     // we only do this to keep the original data around for the final test
     Eigen::Tensor<T, D> B(A);
-    // 2. Prepare first unfolding
+    // 2. Prepare first horizontal unfolding
     auto n_rows = A.dimension(0);
     auto n_cols = static_cast<std::size_t>(A.size() / n_rows);
     Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> M(B.data(), n_rows, n_cols);
@@ -210,5 +210,30 @@ template <typename T, typename U, std::size_t D> TensorTrain<typename std::commo
     }
 
     return retval;
+}
+
+/** mode-k unfolding of a D-mode tensor. */
+template <typename T, int D> Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> unfold(int mode, Eigen::Tensor<T, D> &A) {
+    if (mode >= D) {
+        // cannot unfold on non-existing mode!
+        std::abort();
+    }
+
+    const auto n_rows = A.dimension(mode);
+    const auto n_cols = A.size() / n_rows;
+    std::cout << "n_rows " << n_rows << std::endl;
+    std::cout << "n_cols " << n_cols << std::endl;
+
+    return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(A.data(), n_rows, n_cols);
+}
+
+/** Horizontal unfolding of D-mode tensor */
+template <typename T, int D> Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> H_unfold(Eigen::Tensor<T, D> &A) {
+    return unfold(0, A);
+}
+
+/** Vertical unfolding of D-mode tensor */
+template <typename T, int D> Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> V_unfold(Eigen::Tensor<T, D> &A) {
+    return unfold(D - 1, A);
 }
 } // namespace tteigen
