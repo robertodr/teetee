@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+
+#include <fmt/chrono.h>
+#include <spdlog/spdlog.h>
 
 #include <Eigen/Core>
 #include <Eigen/SVD>
@@ -38,19 +42,14 @@ template <typename T, std::size_t D> struct TensorTrain final {
 };
 
 template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
-    std::cout << "size of tensor = " << A.size() << " elements\nmemory ~ " << to_GiB<T>(A.size()) << " GiB" << std::endl;
-
     // norm of tensor --> gives us the threshold for the SVDs
     const Eigen::Tensor<T, 0> A_norm = A.square().sum().sqrt();
     const double A_F = A_norm.coeff();
-    std::cout << "tensor norm = " << A_F << std::endl;
 
     // SVD threshold
     const auto delta = (epsilon * A_F) / std::sqrt(D - 1);
-    std::cout << "SVD threshold = " << delta << std::endl;
-    // blocked divide-and-conquer SVD object
-    // FIXME the implementation should switch between JacobiSVD for smaller matrices and BDCSVD for larger ones
-    Eigen::BDCSVD<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> svd;
+    SPDLOG_INFO("SVD threshold = {:6e}", delta);
+    Eigen::JacobiSVD<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> svd;
     svd.setThreshold(delta);
 
     // outputs from TT-SVD
@@ -70,13 +69,14 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
     auto n_cols = static_cast<std::size_t>(A.size() / n_rows);
     Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> M(B.data(), n_rows, n_cols);
     // 3. Compute SVD of unfolding
-    std::cout << ">-> decomposing mode 0" << std::endl;
+    auto start = std::chrono::steady_clock::now();
     // NOTE one needs to truncate the results of the SVD to the revealed rank (otherwise we're not actually compressing anything!)
     auto M_svd = svd.compute(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    std::cout << ">-> SVD for mode 0 done" << std::endl;
+    auto stop = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> elapsed = stop - start;
+    SPDLOG_INFO(">-> decomposed mode {} in {}", 0, elapsed);
     // 4. Define ranks and cores
     auto rank = M_svd.rank();
-    std::cout << "rank " << rank << std::endl;
     tt.ranks[1] = rank;
     // only take the first r columns of U
     Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> U = M_svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
@@ -88,15 +88,17 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
 
     // go through the modes (dimensions) in the tensor
     for (int K = 1; K < D - 1; ++K) {
-        std::cout << ">-> decomposing mode " << K << std::endl;
         // 1. Redefine sizes
         n_rows = A.dimension(K);
         n_cols /= n_rows;
         // 2. Construct unfolding
         new (&M) Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(next.data(), tt.ranks[K] * n_rows, n_cols);
         // 3. Compute SVD of unfolding
+        start = std::chrono::steady_clock::now();
         M_svd = svd.compute(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
-        std::cout << ">-> SVD for mode " << K << " done" << std::endl;
+        stop = std::chrono::steady_clock::now();
+        elapsed = stop - start;
+        SPDLOG_INFO(">-> decomposed mode {} in {}", K, elapsed);
         // 4. Define ranks and cores
         rank = M_svd.rank();
         tt.ranks[K + 1] = rank;
@@ -108,21 +110,13 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
         // 5. Next: only use first r singular values and first r columns of V
         next = M_svd.singularValues().head(rank).asDiagonal() * M_svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
     }
-    std::cout << ">-> decomposing mode " << D - 1 << std::endl;
     // fill tt.cores[d-1]
+    start = std::chrono::steady_clock::now();
     tt.cores[D - 1] = Eigen::Tensor<T, 3>(tt.ranks[D - 1], A.dimension(D - 1), 1);
     std::copy(next.data(), next.data() + tt.cores[D - 1].size(), tt.cores[D - 1].data());
-
-    auto ncore = 0;
-    for (const auto &c : tt.cores) {
-        std::cout << "core " << ncore << std::endl;
-        std::cout << "shape = [" << c.dimension(0) << ", " << c.dimension(1) << ", " << c.dimension(2) << "]" << std::endl;
-        ncore += 1;
-    }
-    std::cout << "ranks " << tt.ranks << std::endl;
-    std::cout << "size of TT format = " << tt.size() << " elements\nmemory ~ " << to_GiB<T>(tt.size()) << " GiB" << std::endl;
-    std::cout << "norm of TT format = " << tt.norm() << std::endl;
-    std::cout << "compression = " << (1.0 - static_cast<T>(tt.size()) / static_cast<T>(A.size())) * 100 << "%" << std::endl;
+    stop = std::chrono::steady_clock::now();
+    elapsed = stop - start;
+    SPDLOG_INFO(">-> decomposed mode {} in {}", D - 1, elapsed);
 
     return tt;
 }
@@ -200,13 +194,25 @@ template <typename T, typename U, std::size_t D> TensorTrain<typename std::commo
     retval.ranks.back() = 1;
     for (auto i = 1; i < retval.ranks.size() - 1; ++i) { retval.ranks[i] = left.ranks[i] * right.ranks[i]; }
 
-    // compute cores
-    Eigen::array<Eigen::IndexPair<Eigen::Index>, 1> cdims = {Eigen::IndexPair<Eigen::Index>(1, 1)};
+    // compute cores as the tensor product of the lateral slices
+    Eigen::array<Eigen::IndexPair<Eigen::Index>, 0> cdims = {};
     for (auto i = 0; i < D; ++i) {
-        Eigen::Tensor<T, 3> foo = left.cores[i].contract(right.cores[i], cdims);
-        std::cout << "contraction  " << foo.dimensions() << std::endl;
-        retval.cores[i] = left.cores[i].contract(right.cores[i], cdims);
-        // Eigen::Tensor<V, 3>(retval.ranks[i], retval.modes[i], retval.ranks[i + 1]).setZero();
+        retval.cores[i] = Eigen::Tensor<T, 3>(retval.ranks[i], retval.modes[i], retval.ranks[i + 1]);
+        // loop over slices
+        auto k = 0;
+        auto l = 0;
+        // for (auto j = 0; j < retval.modes[i]; ++j) {
+        //     // define slices in result core
+        //     Eigen::array<Eigen::Index, 3> offsets = {k, j, l};
+        //     Eigen::array<Eigen::Index, 3> extents = {k + retval.ranks[i], j, l + retval.ranks[i + 1]};
+
+        //    // define slices in left and right operands
+        //    retval.cores[i].slice(offsets, extents) = left.cores[i].slice(offsets, extents).contract(right.cores[i].slice(offsets, extents), cdims);
+        //}
+        // std::cout << "retval.cores[" << i << "]\n" << retval.cores[i] << std::endl;
+        SPDLOG_INFO("retval.cores[{}].dimensions()\n{}\n", i, retval.cores[i].dimensions());
+        k += 1;
+        l += 1;
     }
 
     return retval;
@@ -221,8 +227,6 @@ template <typename T, int D> Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> un
 
     const auto n_rows = A.dimension(mode);
     const auto n_cols = A.size() / n_rows;
-    std::cout << "n_rows " << n_rows << std::endl;
-    std::cout << "n_cols " << n_cols << std::endl;
 
     return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(A.data(), n_rows, n_cols);
 }

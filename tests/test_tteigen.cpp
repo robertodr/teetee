@@ -3,7 +3,7 @@
 #include <unsupported/Eigen/CXX11/Tensor>
 
 #include "tteigen.hpp"
-#include "utils.hpp"
+#include "eigen_utils.hpp"
 
 using namespace Catch::literals;
 
