@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.19)
 
 project(teetee LANGUAGES CXX C)
 
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 include(GNUInstallDirs)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_BINDIR})

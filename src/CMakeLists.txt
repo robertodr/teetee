@@ -18,43 +18,28 @@ target_compile_definitions(teetee
   INTERFACE
     # make xtensor use xsimd
     XTENSOR_USE_XSIMD
+    XTENSOR_DEFAULT_LAYOUT=::xt::layout_type::column_major
+    # make xtensor-blas use detected BLAS/LAPACK
+    HAVE_CBLAS=1
     # WARNING if I use these with MKL, I get different SVDs
     # however, the tests still pass.
     # make Eigen use BLAS and LAPACK libraries
     EIGEN_USE_BLAS
     EIGEN_USE_LAPACKE_STRICT
-    #EIGEN_USE_MKL_VML  # enables the use of Intel VML (vector operations)
-    # compile HighFive to dump Eigen and xtensor objects to HDF5
-    H5_USE_EIGEN
-    H5_USE_XTENSOR
     # spdlog should use fmt installed with this project
     SPDLOG_FMT_EXTERNAL
   )
 
+# TODO find a way to enable this only if we're using MKL
+#target_compile_definitions(teetee
+#  INTERFACE
+#    # enables the use of Intel VML (vector operations)
+#    EIGEN_USE_MKL_VML
+#  )
+
 target_include_directories(teetee
   INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>
-  )
-
-target_precompile_headers(teetee
-  INTERFACE
-    # fmt
-    "$<BUILD_INTERFACE:<fmt/core.h$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<fmt/chrono.h$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<fmt/ostream.h$<ANGLE-R>>"
-    # spdlog
-    "$<BUILD_INTERFACE:<spdlog/spdlog.h$<ANGLE-R>>"
-    # xtensor
-    #"$<BUILD_INTERFACE:<xtensor-blas/xlinalg.hpp$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<xtensor/xio.hpp$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<xtensor/xmath.hpp$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<xtensor/xtensor.hpp$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<xtensor/xview.hpp$<ANGLE-R>>"
-    # Eigen
-    "$<BUILD_INTERFACE:<Eigen/Core$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<Eigen/QR$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<Eigen/SVD$<ANGLE-R>>"
-    "$<BUILD_INTERFACE:<unsupported/Eigen/CXX11/Tensor$<ANGLE-R>>"
   )
 
 target_link_libraries(teetee
@@ -70,9 +55,11 @@ target_link_libraries(teetee
     xtensor-blas
   )
 
-add_executable(run_eigen run_eigen.cpp)
+foreach(_exe run_eigen run_xtensor eigensvd xtsvd generate_svd_references)
+  add_executable(${_exe} ${_exe}.cpp)
 
-target_link_libraries(run_eigen
-  PRIVATE
-    teetee
-  )
+  target_link_libraries(${_exe}
+    PRIVATE
+      teetee
+    )
+endforeach()

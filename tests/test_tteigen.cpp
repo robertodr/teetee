@@ -2,8 +2,8 @@
 
 #include <unsupported/Eigen/CXX11/Tensor>
 
-#include "tteigen.hpp"
 #include "eigen_utils.hpp"
+#include "tteigen.hpp"
 
 using namespace Catch::literals;
 
@@ -59,8 +59,6 @@ TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
     SECTION("mode-1 unfolding") {
         const auto unfold = tteigen::unfold(1, A);
 
-        std::cout << "mode-1\n" << unfold << std::endl;
-
         Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(1), A.size() / A.dimension(1));
 
         REQUIRE(unfold.isApprox(ref));
@@ -68,8 +66,6 @@ TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
 
     SECTION("vertical (mode-2) unfolding") {
         const auto unfold = tteigen::V_unfold(A);
-
-        std::cout << "mode-2\n" << unfold << std::endl;
 
         Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(2), A.size() / A.dimension(2));
 

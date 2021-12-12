@@ -3,10 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdlib>
-#include <tuple>
 #include <type_traits>
-#include <utility>
 
 #include <fmt/chrono.h>
 #include <spdlog/spdlog.h>
@@ -14,8 +11,6 @@
 #include <Eigen/Core>
 #include <Eigen/SVD>
 #include <unsupported/Eigen/CXX11/Tensor>
-
-#include "utils.hpp"
 
 namespace tteigen {
 template <typename T, std::size_t D> struct TensorTrain final {
@@ -41,16 +36,12 @@ template <typename T, std::size_t D> struct TensorTrain final {
     }
 };
 
-template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
+template <typename T, int D> TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+
     // norm of tensor --> gives us the threshold for the SVDs
     const Eigen::Tensor<T, 0> A_norm = A.square().sum().sqrt();
     const double A_F = A_norm.coeff();
-
-    // SVD threshold
-    const auto delta = (epsilon * A_F) / std::sqrt(D - 1);
-    SPDLOG_INFO("SVD threshold = {:6e}", delta);
-    Eigen::JacobiSVD<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> svd;
-    svd.setThreshold(delta);
 
     // outputs from TT-SVD
     TensorTrain<T, D> tt;
@@ -60,31 +51,37 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
     // dimensions of each mode
     for (auto i = 0; i < D; ++i) { tt.modes[i] = A.dimension(i); }
 
-    // initialize:
-    // 1. Copy input tensor to temporary B
-    // we only do this to keep the original data around for the final test
-    Eigen::Tensor<T, D> B(A);
-    // 2. Prepare first horizontal unfolding
+    // 1. Prepare first horizontal unfolding
     auto n_rows = A.dimension(0);
-    auto n_cols = static_cast<std::size_t>(A.size() / n_rows);
-    Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>> M(B.data(), n_rows, n_cols);
-    // 3. Compute SVD of unfolding
+    auto n_cols = A.size() / n_rows;
+
+    // set up SVD computations
+    const auto delta = (epsilon * A_F) / std::sqrt(D - 1);
+    SPDLOG_INFO("SVD threshold = {:6e}", delta);
+    Eigen::BDCSVD<matrix_type> svd;
+    svd.setThreshold(delta);
+
+    Eigen::Map<matrix_type> M(A.data(), n_rows, n_cols);
+
+    // 2. Compute SVD of unfolding
     auto start = std::chrono::steady_clock::now();
     // NOTE one needs to truncate the results of the SVD to the revealed rank (otherwise we're not actually compressing anything!)
     auto M_svd = svd.compute(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
     auto stop = std::chrono::steady_clock::now();
     std::chrono::duration<double, std::milli> elapsed = stop - start;
     SPDLOG_INFO(">-> decomposed mode {} in {}", 0, elapsed);
-    // 4. Define ranks and cores
+
+    // 3. Define ranks and cores
     auto rank = M_svd.rank();
     tt.ranks[1] = rank;
     // only take the first r columns of U
-    Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> U = M_svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+    matrix_type U = M_svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
     // fill tt.cores[0]
     tt.cores[0] = Eigen::Tensor<T, 3>(tt.ranks[0], A.dimension(0), rank);
     std::copy(U.data(), U.data() + tt.cores[0].size(), tt.cores[0].data());
-    // 5. Next: only use first r singular values and first r columns of V
-    Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> next = M_svd.singularValues().head(rank).asDiagonal() * M_svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
+
+    // 4. Next: only use first r singular values and first r columns of V
+    matrix_type next = M_svd.singularValues().head(rank).asDiagonal() * M_svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
 
     // go through the modes (dimensions) in the tensor
     for (int K = 1; K < D - 1; ++K) {
@@ -92,7 +89,7 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
         n_rows = A.dimension(K);
         n_cols /= n_rows;
         // 2. Construct unfolding
-        new (&M) Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(next.data(), tt.ranks[K] * n_rows, n_cols);
+        new (&M) Eigen::Map<matrix_type>(next.data(), tt.ranks[K] * n_rows, n_cols);
         // 3. Compute SVD of unfolding
         start = std::chrono::steady_clock::now();
         M_svd = svd.compute(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
@@ -103,7 +100,7 @@ template <typename T, int D> TensorTrain<T, D> tt_svd(const Eigen::Tensor<T, D> 
         rank = M_svd.rank();
         tt.ranks[K + 1] = rank;
         // only take the first r columns of U
-        Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> U = M_svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+        matrix_type U = M_svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
         // fill tt.cores[K]
         tt.cores[K] = Eigen::Tensor<double, 3>(tt.ranks[K], n_rows, rank);
         std::copy(U.data(), U.data() + tt.cores[K].size(), tt.cores[K].data());
