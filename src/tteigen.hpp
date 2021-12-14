@@ -277,31 +277,35 @@ TensorTrain<typename std::common_type<U, T>::type, D> hadamard_product(
     return retval;
 }
 
-/** mode-k unfolding of a D-mode tensor. */
-template <typename T, int D>
-Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> unfold(int mode,
-                                                        Eigen::Tensor<T, D> &A) {
-    if (mode >= D) {
-        // cannot unfold on non-existing mode!
-        std::abort();
-    }
-
-    const auto n_rows = A.dimension(mode);
+/** Horizontal unfolding of 3-mode tensor
+ *
+ *  Given a tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times M}\f$,
+ *  generate a matrix \f$\mathcal{H}(\mathcal{T}) \in \mathbb{K}^{N\times LM}$
+ *  by concatenating the slices \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in
+ *  \mathbb{K}^{N\times M}\f$ _horizontally_.
+ */
+template <typename T>
+Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> H_unfold(Eigen::Tensor<T, 3> &A) {
+    const auto n_rows = A.dimension(0);
     const auto n_cols = A.size() / n_rows;
 
     return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(
         A.data(), n_rows, n_cols);
 }
 
-/** Horizontal unfolding of D-mode tensor */
-template <typename T, int D>
-Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> H_unfold(Eigen::Tensor<T, D> &A) {
-    return unfold(0, A);
-}
+/** Vertical unfolding of 3-mode tensor
+ *
+ *  Given a tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times M}\f$,
+ *  generate a matrix \f$\mathcal{V}(\mathcal{T}) \in \mathbb{K}^{NL\times M}$
+ *  by concatenating the slices \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in
+ *  \mathbb{K}^{N\times M}\f$ _vertically_.
+ */
+template <typename T>
+Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> V_unfold(Eigen::Tensor<T, 3> &A) {
+    const auto n_cols = A.dimension(2);
+    const auto n_rows = A.size() / n_cols;
 
-/** Vertical unfolding of D-mode tensor */
-template <typename T, int D>
-Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> V_unfold(Eigen::Tensor<T, D> &A) {
-    return unfold(D - 1, A);
+    return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(
+        A.data(), n_rows, n_cols);
 }
 } // namespace tteigen
