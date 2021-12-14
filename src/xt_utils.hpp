@@ -6,9 +6,11 @@
 #include "utils.hpp"
 
 namespace ttxt {
-template <typename Indexing = RowMajor<6>, std::size_t d0 = 5, std::size_t d1 = 5, std::size_t d2 = 5, std::size_t d3 = 5, std::size_t d4 = 5, std::size_t d5 = 5>
+template <typename Indexing = ColMajor<6>, std::size_t d0 = 5, std::size_t d1 = 5, std::size_t d2 = 5, std::size_t d3 = 5, std::size_t d4 = 5, std::size_t d5 = 5>
 auto sample_tensor() -> xt::xtensor<double, 6> {
-    Indexing linear_id(std::array<std::size_t, 6>{d0, d1, d2, d3, d4, d5});
+    std::array<std::size_t, 6> shape = {d0, d1, d2, d3, d4, d5};
+
+    Indexing linear_id(shape);
 
     auto count = d0 * d1 * d2 * d3 * d4 * d5;
     auto buffer = static_cast<double *>(std::aligned_alloc(alignof(double), sizeof(double) * count));
@@ -29,7 +31,7 @@ auto sample_tensor() -> xt::xtensor<double, 6> {
         }
     }
 
-    xt::xtensor<double, 6, xt::layout_type::row_major> A = xt::adapt(buffer, count, xt::acquire_ownership(), {d0, d1, d2, d3, d4, d5});
+    xt::xtensor<double, 6> A = xt::adapt(buffer, count, xt::acquire_ownership(), shape);
 
     return A;
 }
