@@ -5,7 +5,6 @@
 #include <Eigen/Core>
 #include <Eigen/SVD>
 
-#define H5_USE_EIGEN
 #include <highfive/H5Easy.hpp>
 
 int main() {

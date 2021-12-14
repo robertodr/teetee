@@ -16,11 +16,6 @@ target_compile_options(teetee
 
 target_compile_definitions(teetee
   INTERFACE
-    # make xtensor use xsimd
-    XTENSOR_USE_XSIMD
-    XTENSOR_DEFAULT_LAYOUT=::xt::layout_type::column_major
-    # make xtensor-blas use detected BLAS/LAPACK
-    HAVE_CBLAS=1
     # WARNING if I use these with MKL, I get different SVDs
     # however, the tests still pass.
     # make Eigen use BLAS and LAPACK libraries
@@ -28,6 +23,8 @@ target_compile_definitions(teetee
     EIGEN_USE_LAPACKE_STRICT
     # spdlog should use fmt installed with this project
     SPDLOG_FMT_EXTERNAL
+    # tell HighFive to enable the Eigen backend
+    H5_USE_EIGEN
   )
 
 # TODO find a way to enable this only if we're using MKL
@@ -49,13 +46,9 @@ target_link_libraries(teetee
     LAPACK::LAPACK
     HighFive
     Eigen3::Eigen
-    xtl
-    xsimd
-    xtensor
-    xtensor-blas
   )
 
-foreach(_exe run_eigen run_xtensor eigensvd xtsvd generate_svd_references)
+foreach(_exe run_eigen eigensvd generate_svd_references)
   add_executable(${_exe} ${_exe}.cpp)
 
   target_link_libraries(${_exe}
