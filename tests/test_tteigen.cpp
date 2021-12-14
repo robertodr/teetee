@@ -1,4 +1,8 @@
+#include <cmath>
+
 #include <catch2/catch.hpp>
+
+#include <spdlog/spdlog.h>
 
 #include <unsupported/Eigen/CXX11/Tensor>
 
@@ -8,13 +12,15 @@
 using namespace Catch::literals;
 
 // warning works only for D = 6!
-template <typename T> Eigen::Tensor<T, 6> to_full(const tteigen::TensorTrain<T, 6> &tt) {
+template <typename T>
+Eigen::Tensor<T, 6> to_full(const tteigen::TensorTrain<T, 6> &tt) {
     // the reconstructed tensor
     Eigen::Tensor<T, 6> full;
 
     Eigen::array<Eigen::IndexPair<int>, 1> cdims = {Eigen::IndexPair<int>(1, 0)};
     // contract dimension 1 of first chipped core with dimension 0 of second core
-    Eigen::Tensor<T, 3> tmp_1 = (tt.cores[0].chip(0, 0)).contract(tt.cores[1], cdims);
+    Eigen::Tensor<T, 3> tmp_1 =
+        (tt.cores[0].chip(0, 0)).contract(tt.cores[1], cdims);
 
     cdims = {Eigen::IndexPair<int>(2, 0)};
     // contract dimension 2 of temporary with dimension 0 of third core
@@ -51,7 +57,8 @@ TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
     SECTION("horizontal (mode-0) unfolding") {
         const auto unfold = tteigen::H_unfold(A);
 
-        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(0), A.size() / A.dimension(0));
+        Eigen::Map<Eigen::MatrixXd> ref(
+            A.data(), A.dimension(0), A.size() / A.dimension(0));
 
         REQUIRE(unfold.isApprox(ref));
     }
@@ -59,7 +66,8 @@ TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
     SECTION("mode-1 unfolding") {
         const auto unfold = tteigen::unfold(1, A);
 
-        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(1), A.size() / A.dimension(1));
+        Eigen::Map<Eigen::MatrixXd> ref(
+            A.data(), A.dimension(1), A.size() / A.dimension(1));
 
         REQUIRE(unfold.isApprox(ref));
     }
@@ -67,7 +75,8 @@ TEST_CASE("Eigen :: unfoldings of 3-mode tensor", "[tt][eigen][unfold]") {
     SECTION("vertical (mode-2) unfolding") {
         const auto unfold = tteigen::V_unfold(A);
 
-        Eigen::Map<Eigen::MatrixXd> ref(A.data(), A.dimension(2), A.size() / A.dimension(2));
+        Eigen::Map<Eigen::MatrixXd> ref(
+            A.data(), A.dimension(2), A.size() / A.dimension(2));
 
         REQUIRE(unfold.isApprox(ref));
     }
@@ -117,10 +126,33 @@ TEST_CASE("Eigen :: tensor train format", "[tt][eigen]") {
         // the reconstructed tensor
         Eigen::Tensor<double, 6> check = to_full(tt_A + tt_A);
 
+        SPDLOG_INFO(check(0, 0, 0, 0, 0, 0));
+        SPDLOG_INFO(A(0, 0, 0, 0, 0, 0) + A(0, 0, 0, 0, 0, 0));
+
         Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
         const double check_norm = tmp.coeff();
 
         REQUIRE(check_norm == Approx(2.0 * A_F));
+    }
+
+    SECTION("Hadarmard product of two tensor trains, without rounding") {
+        // the reconstructed tensor
+        Eigen::Tensor<double, 6> check =
+            to_full(tteigen::hadamard_product(tt_A, tt_A));
+
+        SPDLOG_INFO(check(0, 0, 0, 0, 0, 0));
+        SPDLOG_INFO(A(0, 0, 0, 0, 0, 0) * A(0, 0, 0, 0, 0, 0));
+
+        Eigen::Tensor<double, 6> foo = A * A;
+        SPDLOG_INFO(foo(0, 0, 0, 0, 0, 0));
+        // norm of tensor --> gives us the threshold for the SVDs
+        const Eigen::Tensor<double, 0> foo_norm = foo.square().sum().sqrt();
+        const double foo_F = foo_norm.coeff();
+
+        Eigen::Tensor<double, 0> tmp = check.square().sum().sqrt();
+        const double check_norm = tmp.coeff();
+
+        REQUIRE(check_norm == Approx(foo_F));
     }
 }
 

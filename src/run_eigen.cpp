@@ -6,8 +6,8 @@
 #include <fmt/ranges.h>
 #include <spdlog/spdlog.h>
 
-#include "tteigen.hpp"
 #include "eigen_utils.hpp"
+#include "tteigen.hpp"
 
 int main() {
     spdlog::set_pattern("[%Y-%m-%d %T][%^%l%$][TID: %t, PID: %P][%!@%s:%4#] %v");
@@ -35,8 +35,11 @@ int main() {
     SPDLOG_INFO("size of TT format = {} elements", tt_A.size());
     SPDLOG_INFO("memory ~ {:.2e} GiB", to_GiB<double>(tt_A.size()));
 
-    auto compression = (1.0 - static_cast<double>(tt_A.size()) / static_cast<double>(A.size()));
+    auto compression =
+        (1.0 - static_cast<double>(tt_A.size()) / static_cast<double>(A.size()));
     SPDLOG_INFO("compression = {:2.2f}%", compression * 100);
+
+    auto B = tteigen::hadamard_product(tt_A, tt_A);
 
     return EXIT_SUCCESS;
 }

@@ -31,5 +31,5 @@ template <typename T> auto to_GiB(std::size_t count) -> double {
 }
 
 auto value(int i0, int i1, int i2, int i3, int i4, int i5) -> double {
-    return 1.0e-6 * ((i0 / M_2_SQRTPI) - M_E * (i1 * 0.002) + std::pow(i2 + 1, -2) * M_PI * 0.03 - std::sin(i3 * M_PI_4) - 0.005 * std::cos(i5 / (i4 + 1)));
+    return ((i0 / M_2_SQRTPI) - M_E * (i1 * 0.002) + std::pow(i2 + 1, -2) * M_PI * 0.03 - std::sin(i3 * M_PI_4) - 0.005 * std::cos(i5 / (i4 + 1)));
 };
