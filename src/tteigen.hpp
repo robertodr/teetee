@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <type_traits>
 
 #include <fmt/chrono.h>
@@ -48,6 +49,8 @@ TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
     const Eigen::Tensor<T, 0> A_norm = A.square().sum().sqrt();
     const double A_F = A_norm.coeff();
 
+    SPDLOG_INFO("Frobenius norm {}", A_F);
+
     // outputs from TT-SVD
     TensorTrain<T, D> tt;
     // set "border" ranks to 1
@@ -74,10 +77,13 @@ TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
     auto stop = Clock::now();
     std::chrono::duration<double, std::milli> elapsed = stop - start;
 
-    SPDLOG_INFO(">-> decomposed mode {} in {}", 0, elapsed);
+    SPDLOG_INFO("SVD decomposition of mode {} in {}", 0, elapsed);
 
-    // FIXME should be checking whether we converged or not
-    // if (M_svd.info() != Eigen::Success) abort();
+    if (M_svd.info() != Eigen::Success) {
+        fmt::print(
+            "SVD decomposition of mode {} (out of {}) did not succeed!", 0, D);
+        std::abort();
+    }
 
     // define ranks and cores
     auto rank = (M_svd.singularValues().array() >= delta).count();
@@ -105,10 +111,13 @@ TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
         M_svd = svd.compute(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
         stop = Clock::now();
         elapsed = stop - start;
-        SPDLOG_INFO(">-> decomposed mode {} in {}", K, elapsed);
+        SPDLOG_INFO("SVD decomposition of mode {} in {}", K, elapsed);
 
-        // FIXME should be checking whether we converged or not
-        // if (M_svd.info() != Eigen::Success) abort();
+        if (M_svd.info() != Eigen::Success) {
+            fmt::print(
+                "SVD decomposition of mode {} (out of {}) did not succeed!", K, D);
+            std::abort();
+        }
 
         // define ranks and cores
         rank = (M_svd.singularValues().array() >= delta).count();
@@ -133,7 +142,7 @@ TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
         next.data(), next.data() + tt.cores[D - 1].size(), tt.cores[D - 1].data());
     stop = Clock::now();
     elapsed = stop - start;
-    SPDLOG_INFO(">-> decomposed mode {} in {}", D - 1, elapsed);
+    SPDLOG_INFO("SVD decomposition of mode {} in {}", D - 1, elapsed);
 
     return tt;
 }
@@ -285,9 +294,10 @@ TensorTrain<typename std::common_type<U, T>::type, D> hadamard_product(
  *  \mathbb{K}^{N\times M}\f$ _horizontally_.
  */
 template <typename T>
-Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> H_unfold(Eigen::Tensor<T, 3> &A) {
+Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> horizontal_unfolding(
+    Eigen::Tensor<T, 3> &A) {
     const auto n_rows = A.dimension(0);
-    const auto n_cols = A.size() / n_rows;
+    const auto n_cols = A.dimension(1) * A.dimension(2);
 
     return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(
         A.data(), n_rows, n_cols);
@@ -301,9 +311,10 @@ Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> H_unfold(Eigen::Tensor<T, 3> &A
  *  \mathbb{K}^{N\times M}\f$ _vertically_.
  */
 template <typename T>
-Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> V_unfold(Eigen::Tensor<T, 3> &A) {
+Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> vertical_unfolding(
+    Eigen::Tensor<T, 3> &A) {
+    const auto n_rows = A.dimension(0) * A.dimension(1);
     const auto n_cols = A.dimension(2);
-    const auto n_rows = A.size() / n_cols;
 
     return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(
         A.data(), n_rows, n_cols);
