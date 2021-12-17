@@ -64,7 +64,7 @@ TEST_CASE("horizontal unfolding of 3-mode tensor",
         }
     }
 
-    const auto unfold = tteigen::H_unfold(A);
+    const auto unfold = tteigen::horizontal_unfolding(A);
 
     REQUIRE(allclose(unfold, ref));
 }
@@ -91,7 +91,7 @@ TEST_CASE("vertical unfolding of 3-mode tensor", "[tt][eigen][unfold][vertical]"
         }
     }
 
-    const auto unfold = tteigen::V_unfold(A);
+    const auto unfold = tteigen::vertical_unfolding(A);
 
     REQUIRE(allclose(unfold, ref));
 }

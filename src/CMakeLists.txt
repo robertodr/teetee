@@ -39,6 +39,20 @@ target_include_directories(teetee
     $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>
   )
 
+target_precompile_headers(teetee
+  INTERFACE
+    "$<BUILD_INTERFACE:<Eigen/Core$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<Eigen/QR$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<Eigen/SVD$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<unsupported/Eigen/CXX11/Tensor$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<fmt/core.h$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<fmt/chrono.h$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<fmt/ostream.h$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<fmt/ranges.h$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<spdlog/spdlog.h$<ANGLE-R>>"
+    "$<BUILD_INTERFACE:<highfive/H5Easy.hpp$<ANGLE-R>>"
+  )
+
 target_link_libraries(teetee
   INTERFACE
     fmt::fmt
