@@ -213,7 +213,46 @@ TEST_CASE("Hadamard (elementwise) product of two tensor trains, without rounding
     REQUIRE(allclose(check, B, 0.0, 1e-12));
 }
 
+TEST_CASE("right orthonormalization of tensor train",
+          "[tt][eigen][right-orthonormalization]") {
+    auto A = tteigen::sample_tensor();
+
+    // take a copy so we can do elementwise comparison
+    const Eigen::Tensor<double, 6> B = A;
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = tteigen::tt_svd(A, epsilon);
+
+    auto tt_A_orth = tteigen::right_orthonormalize(tt_A);
+
+    // the reconstructed tensor
+    Eigen::Tensor<double, 6> check = to_full(tt_A_orth);
+
+    const Eigen::Tensor<double, 0> B_norm = B.square().sum().sqrt();
+    const double B_F = B_norm.coeff();
+
+    Eigen::Tensor<double, 0> tmp = (check - B).square().sum().sqrt();
+    const double check_norm = tmp.coeff();
+
+    REQUIRE(check_norm <= epsilon * B_F);
+
+    REQUIRE(allclose(check, B, 0.0, 1e-12));
+}
+
+TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
+    auto A = tteigen::sample_tensor();
+
+    const Eigen::Tensor<double, 0> A_norm = A.square().sum().sqrt();
+    const double A_F = A_norm.coeff();
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = tteigen::tt_svd(A, epsilon);
+
+    auto tt_A_orth = tteigen::right_orthonormalize(tt_A);
+
+    REQUIRE(tt_A_orth.norm() == Approx(A_F));
+}
+
 /*
 // scalar product of two tensors
-// norm
 */

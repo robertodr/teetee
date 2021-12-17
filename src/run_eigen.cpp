@@ -39,7 +39,9 @@ int main() {
         (1.0 - static_cast<double>(tt_A.size()) / static_cast<double>(A.size()));
     SPDLOG_INFO("compression = {:2.2f}%", compression * 100);
 
-    auto B = tteigen::hadamard_product(tt_A, tt_A);
+    auto Y = tteigen::right_orthonormalize(tt_A);
+
+    SPDLOG_INFO("norm {}", Y.norm());
 
     return EXIT_SUCCESS;
 }

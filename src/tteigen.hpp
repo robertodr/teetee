@@ -12,21 +12,48 @@
 #include <spdlog/spdlog.h>
 
 #include <Eigen/Core>
+#include <Eigen/QR>
 #include <Eigen/SVD>
 #include <unsupported/Eigen/CXX11/Tensor>
 
 namespace tteigen {
 using Clock = std::chrono::steady_clock;
 
+enum class Orthonormal { No, Left, Right };
+
 template <typename T, std::size_t D> struct TensorTrain final {
-    using core_type = Eigen::Tensor<T, 3>;
+    /** Indexing */
     using size_type = Eigen::Index;
+    /** Format for 0-th and (D-1)-th cores */
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    /** Shape of cores */
+    using shape_type = std::array<size_type, 3>;
+    /** Inner cores (1 to D-2) */
+    using core_type = Eigen::Tensor<T, 3>;
+
+    Orthonormal ortho{Orthonormal::No};
+
+    T norm_{0};
 
     std::array<size_type, D> modes;
     std::array<size_type, D + 1> ranks;
+    std::array<shape_type, D> shapes;
     // each of the cores has shape {R_{n-1}, I_{n}, R_{n}}
     // with R_{0} = 1 = R_{N} and I_{n} the size of mode n
     std::array<core_type, D> cores;
+
+    /*\@{ Constructors */
+    TensorTrain() = default;
+
+    TensorTrain(std::array<size_type, D> Is, std::array<size_type, D + 1> Rs)
+            : modes(Is)
+            , ranks(Rs) {
+        for (auto K = 0; K < D; ++K) {
+            shapes[K] = {ranks[K], modes[K], ranks[K + 1]};
+            cores[K] = core_type(shapes[K]).setZero();
+        }
+    }
+    /*\@}*/
 
     auto size() const -> Eigen::Index {
         auto n = 0;
@@ -34,10 +61,26 @@ template <typename T, std::size_t D> struct TensorTrain final {
         return n;
     }
 
-    // TODO
-    auto norm() const -> T {
-        auto norm = T{0};
-        return norm;
+    auto norm() -> T {
+        // TODO it requires left or right orthonormalization, which might be a bi
+        //    if (ortho == Orthonormal::No) {
+        //        right_orthonormalize(cores);
+        //        ortho = Orthonormal::Right;
+        //    }
+
+        Eigen::Tensor<T, 0> tmp;
+        switch (ortho) {
+            case Orthonormal::Left:
+                tmp = cores[D - 1].square().sum().sqrt();
+                norm_ = static_cast<T>(tmp.coeff());
+                break;
+            case Orthonormal::Right:
+                tmp = cores[0].square().sum().sqrt();
+                norm_ = static_cast<T>(tmp.coeff());
+                break;
+        }
+
+        return norm_;
     }
 };
 
@@ -318,5 +361,58 @@ Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> vertical_unfolding(
 
     return Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>(
         A.data(), n_rows, n_cols);
+}
+
+/** Right-orthonormalization of tensor train.
+ *
+ * @note This is non-destructive.
+ * @note We only use the "thin" \f$\mathbt{Q}_{1}\f$ and \f$\mathbt{R}_{1}\f$.
+ */
+template <typename T, std::size_t D>
+TensorTrain<T, D> right_orthonormalize(TensorTrain<T, D> &X) {
+    using core_type = typename TensorTrain<T, D>::core_type;
+    using matrix_type = typename TensorTrain<T, D>::matrix_type;
+
+    TensorTrain<T, D> Y(X.modes, X.ranks);
+
+    // start from last core and go down to second mode
+    Y.cores[D - 1] = X.cores[D - 1];
+
+    for (auto i = D - 1; i > 0; --i) {
+        // why not auto? .transpose() returns an expression and hence its QR is
+        // not well-defined.  To avoid this issue, we need to instantiate it as
+        // a matrix.
+        matrix_type Ht = horizontal_unfolding(Y.cores[i]).transpose();
+        auto m = Ht.rows();
+        auto n = Ht.cols();
+
+        auto start = Clock::now();
+        auto qr = Ht.householderQr();
+        auto stop = Clock::now();
+        std::chrono::duration<double, std::milli> elapsed = stop - start;
+        SPDLOG_INFO("QR decomposition of mode {} in {}", i, elapsed);
+
+        // get thin Q factor...
+        matrix_type Q1 = Eigen::MatrixXd::Identity(m, n);
+        qr.householderQ().applyThisOnTheLeft(Q1);
+        // ...transpose it...
+        matrix_type Q1t = Q1.transpose();
+        // ...copy it to the current core
+        std::copy(Q1t.data(), Q1t.data() + Y.cores[i].size(), Y.cores[i].data());
+
+        // R factors for thin QR
+        matrix_type R = qr.matrixQR()
+                            .topLeftCorner(n, n)
+                            .template triangularView<Eigen::Upper>();
+
+        matrix_type next = vertical_unfolding(X.cores[i - 1]) * R.transpose();
+        // ...and set the result to be the vertical unfolding of the next core of Y
+        std::copy(
+            next.data(), next.data() + Y.cores[i - 1].size(), Y.cores[i - 1].data());
+    }
+
+    Y.ortho = Orthonormal::Right;
+
+    return Y;
 }
 } // namespace tteigen
