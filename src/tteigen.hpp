@@ -20,8 +20,359 @@
 namespace tteigen {
 using Clock = std::chrono::steady_clock;
 
-enum class Orthonormal { No, Left, Right };
+template <typename T, std::size_t D> class TT final {
+    static_assert(std::is_floating_point_v<T>,
+                  "TensorTrain can only be instantiated with floating point types");
 
+public:
+    /** Indexing */
+    using size_type = Eigen::Index;
+    /** Shape of cores */
+    using shape_type = std::array<size_type, 3>;
+    /** Cores */
+    using core_type = Eigen::Tensor<T, 3>;
+
+private:
+    /** Whether the tensor train is right-orthonormal. */
+    bool is_orthonormal_{false};
+    /** Whether we computed the norm for this tensor train. */
+    bool norm_computed_{false};
+
+    /** Number of elements in the compressed (tensor train) representation. */
+    size_type c_count_{0};
+    /** Number of elements in the uncompressed representation. */
+    size_type u_count_{0};
+
+    /** Norm of the tensor train. */
+    T norm_{0};
+
+    /** Decomposition threshold. */
+    T epsilon_{1e-12};
+
+    /** Sizes of tensor modes \f$I_{n}\f$ */
+    std::array<size_type, D> modes_;
+    /** Ranks of tensor cores \f$R_{n}\f$ */
+    std::array<size_type, D + 1> ranks_;
+    /** Shapes of tensor cores \f$\lbrace R_{n-1}, I_{n}, R_{n} \rbrace\f$
+     * @note \f$R_{0} = 1 = R_{n}\f$
+     */
+    std::array<shape_type, D> shapes_;
+    /** Tensor train cores: \f$\mathcal{T}_{\mathcal{X}, n} \in \mathbb{K}^{R_{n-1}
+     * \times I_{n} \times R_{n}}\f$ */
+    std::array<core_type, D> cores_;
+
+    /** Tensor train decomposition *via* successive SVDs
+     *  @param[in] A dense tensor data in *natural descending order*.
+     *  @param[in] delta SVD truncation threshold.
+     *
+     * This is an implementation of algorithm 1 in: Oseledets, I. V. Tensor-Train
+     * Decomposition. SIAM J. Sci. Comput. 2011, 33 (5), 2295–2317.
+     * https://doi.org/10.1137/090752286.
+     *
+     * @note We use the block divide-and-conquer SVD algorithm, as implemented in
+     * Eigen.
+     */
+    void decompose(T *A, T delta) {
+        using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+        SPDLOG_INFO("SVD threshold = {:6e}", delta);
+
+        // prepare first horizontal unfolding
+        auto n_rows = modes_[0];
+        auto n_cols = u_count_ / n_rows;
+
+        // wrap tensor data into a matrix
+        Eigen::Map<matrix_type> M(A, n_rows, n_cols);
+
+        // compute SVD of unfolding
+        auto start = Clock::now();
+        auto svd = M.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+        auto stop = Clock::now();
+        std::chrono::duration<double, std::milli> elapsed = stop - start;
+
+        SPDLOG_INFO("SVD decomposition of mode {} in {}", 0, elapsed);
+
+        if (svd.info() != Eigen::Success) {
+            SPDLOG_ERROR(
+                "SVD decomposition of mode {} (out of {}) did not succeed!", 0, D);
+            std::abort();
+        }
+
+        // define ranks and cores
+        auto rank = (svd.singularValues().array() >= delta).count();
+        shapes_[0] = {1, modes_[0], rank};
+        ranks_[1] = rank;
+        cores_[0] = shape_type(shapes_[0]);
+        // only take the first rank columns of U to fill cores_[0]
+        std::copy(svd.matrixU().data(),
+                  svd.matrixU().data() + cores_[0].size(),
+                  cores_[0].data());
+        c_count_ = cores_[0].size();
+
+        // prepare next unfolding: only use first rank singular values and first rank
+        // columns of V
+        matrix_type next =
+            svd.singularValues().head(rank).asDiagonal() *
+            svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
+
+        // go through the modes (dimensions) in the tensor
+        for (int K = 1; K < D - 1; ++K) {
+            // sizes of tensor unfoldings
+            n_rows = modes_[K];
+            n_cols /= n_rows;
+            // construct unfolding
+            new (&M)
+                Eigen::Map<matrix_type>(next.data(), ranks_[K] * n_rows, n_cols);
+            // compute SVD of unfolding
+            start = Clock::now();
+            svd = M.bdcSvd.compute(Eigen::ComputeThinU | Eigen::ComputeThinV);
+            stop = Clock::now();
+            elapsed = stop - start;
+            SPDLOG_INFO("SVD decomposition of mode {} in {}", K, elapsed);
+
+            if (svd.info() != Eigen::Success) {
+                SPDLOG_ERROR(
+                    "SVD decomposition of mode {} (out of {}) did not succeed!",
+                    K,
+                    D);
+                std::abort();
+            }
+
+            // define ranks and cores
+            rank = (svd.singularValues().array() >= delta).count();
+            shapes_[K] = {ranks_[K], modes_[K], rank};
+            ranks_[K + 1] = rank;
+            cores_[K] = core_type(shapes_[K]);
+            c_count_ += cores_[K].size();
+            // only take the first rank columns of U to fill cores_[K]
+            std::copy(svd.matrixU().data(),
+                      svd.matrixU().data() + cores_[K].size(),
+                      cores_[K].data());
+
+            // prepare next unfolding: only use first rank singular values and first
+            // rank columns of V
+            next = svd.singularValues().head(rank).asDiagonal() *
+                   svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
+        }
+
+        shapes_[D - 1] = {ranks_[D - 1], modes_[D - 1], ranks_[D]};
+        cores_[D - 1] = core_type(shapes_[D - 1]);
+        c_count_ += cores_[D - 1].size();
+        // fill cores_[D-1]
+        start = Clock::now();
+        std::copy(
+            next.data(), next.data() + cores_[D - 1].size(), cores_[D - 1].data());
+        stop = Clock::now();
+        elapsed = stop - start;
+        SPDLOG_INFO("SVD decomposition of mode {} in {}", D - 1, elapsed);
+    }
+
+public:
+    /*\@{ Constructors */
+    TT() = default;
+
+    /** Zero-initialize a tensor train from given modes and ranks.
+     *  @param[in] Is array of modes.
+     *  @param[in] Rs array of ranks.
+     */
+    TT(std::array<size_type, D> Is, std::array<size_type, D + 1> Rs)
+            : modes_(Is)
+            , ranks_(Rs) {
+        for (auto K = 0; K < D; ++K) {
+            shapes_[K] = {ranks_[K], modes_[K], ranks_[K + 1]};
+            cores_[K] = core_type(shapes_[K]).setZero();
+        }
+    }
+
+    /** Construct a tensor train from given data, modes, and ranks.
+     *  @param[in] A dense tensor data in *natural descending order*
+     *  @param[in] Is array of modes.
+     *  @param[in] epsilon decomposition tolerance.
+     *
+     *  Given a full tensor \f$\mathcal{X}\f$ and its TT decomposition
+     * \f$\bar{\mathcal{X}}\f$, the latter is constructed such that:
+     *
+     *  \f[
+     *     \| \mathcal{X} - \tilde{\mathcal{X}} \| \leq \epsilon \| \mathcal{X} \|
+     *  \f]
+     *
+     *  where \f$\tilde{\mathcal{X}}\f$ is the reconstructed full tensor and
+     *  \f$\| \cdot \|\f$ the Frobenius norm.
+     *  \f$\epsilon\f$ is user-provided and we compute the SVD truncation threshold
+     * from it, as follows:
+     *
+     *  \f[
+     *     \delta = \frac{\epsilon}{\sqrt{D-1}} \| \mathcal{X} \|
+     *  \f]
+     *
+     *  @warning The dense tensor data is assumed to be in natural descending
+     *  order. This is critical for the tensor train SVD algorithm to work correctly.
+     */
+    TT(T *A, std::array<size_type, D> Is, T epsilon = 1e-12)
+            : norm_computed_{true}
+            , epsilon_{epsilon}
+            , modes_{Is} {
+        // compute norm of input tensor
+        u_count_ = std::accumulate(
+            modes_.cbegin(), modes_.cend(), std::multiplies<size_type>(), 1);
+        norm_ = frobenius_norm(A, u_count_);
+
+        auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
+
+        // the "border" ranks are 1 by construction
+        ranks_.front() = ranks_.back() = 1;
+
+        decompose(A, delta);
+    }
+    /*\@}*/
+
+    /*\@{ Tensor train operations
+     *
+     * @note It is not necessary to implement left orthonormalization.
+     */
+    /** Right-orthonormalize `*this` tensor train.
+     *
+     * This is an implementation of algorithm 2.1 in: Al Daas, H.; Ballard, G.;
+     * Benner, P. Parallel Algorithms for Tensor Train Arithmetic. arXiv
+     * [math.NA], 2020.
+     *
+     * @note We use the Householder QR algorithm, as implemented in Eigen.
+     */
+    void right_orthonormalize() {
+        // start from last core and go down to second mode
+        // for (auto i = D - 1; i > 0; --i) {
+        //    // why not auto? .transpose() returns an expression and hence its QR is
+        //    // not well-defined.  To avoid this issue, we need to instantiate it as
+        //    // a matrix.
+        //    matrix_type Ht = horizontal_unfolding(Y.cores[i]).transpose();
+        //    auto m = Ht.rows();
+        //    auto n = Ht.cols();
+
+        //    auto start = Clock::now();
+        //    auto qr = Ht.householderQr();
+        //    auto stop = Clock::now();
+        //    std::chrono::duration<double, std::milli> elapsed = stop - start;
+        //    SPDLOG_INFO("QR decomposition of mode {} in {}", i, elapsed);
+
+        //    // get thin Q factor...
+        //    matrix_type Q1 = Eigen::MatrixXd::Identity(m, n);
+        //    qr.householderQ().applyThisOnTheLeft(Q1);
+        //    // ...transpose it...
+        //    matrix_type Q1t = Q1.transpose();
+        //    // ...copy it to the current core
+        //    std::copy(Q1t.data(), Q1t.data() + Y.cores[i].size(),
+        //    Y.cores[i].data());
+
+        //    // R factors for thin QR
+        //    matrix_type R = qr.matrixQR()
+        //                        .topLeftCorner(n, n)
+        //                        .template triangularView<Eigen::Upper>();
+
+        //    matrix_type next = vertical_unfolding(X.cores[i - 1]) * R.transpose();
+        //    // ...and set the result to be the vertical unfolding of the next core
+        //    of
+        //    // Y
+        //    std::copy(next.data(),
+        //              next.data() + Y.cores[i - 1].size(),
+        //              Y.cores[i - 1].data());
+        //}
+
+        is_orthonormal_ = true;
+
+        norm_ = frobenius_norm(cores_[0].data(), cores_[0].size());
+        norm_computed_ = true;
+    }
+    /** Rounding of `*this` tensor train.
+     *
+     * @param[in] epsilon decomposition tolerance.
+     *
+     *  Given a tensor in TT format \f$\mathcal{Y}\f$, rounding produces a tensor in
+     * TT format \f$\mathcal{X}\f$ with reduced ranks, sucht that:
+     *
+     *  \f[
+     *     \| \tilde{\mathcal{X}} - \tilde{\mathcal{Y}} \| \leq \epsilon \|
+     * \tilde{\mathcal{Y}} \| \f]
+     *
+     *  where \f$\tilde{\cdot}\f$ are the reconstructed full tensors and
+     *  \f$\| \cdot \|\f$ the Frobenius norm.
+     *  \f$\epsilon\f$ is user-provided and we compute the SVD truncation threshold
+     * from it, as follows:
+     *
+     *  \f[
+     *     \delta = \frac{\epsilon}{\sqrt{D-1}} \| \tilde{\mathcal{Y}} \|
+     *  \f]
+     *
+     * This is an implementation of algorithm 2.2 in: Al Daas, H.; Ballard, G.;
+     * Benner, P. Parallel Algorithms for Tensor Train Arithmetic. arXiv
+     * [math.NA], 2020. The description of algorithm first appeared as algorithm 2
+     * in: Oseledets, I. V. Tensor-Train Decomposition. SIAM J. Sci. Comput. 2011, 33
+     * (5), 2295–2317. https://doi.org/10.1137/090752286.
+     *
+     * @note We use the block divide-and-conquer SVD algorithm, as implemented in
+     * Eigen.
+     */
+    void rounding(T epsilon) {
+        // reset epsilon_
+        epsilon_ = epsilon;
+        // Check whether we have the norm of *this already, because:
+        // a. either we are rounding right after decomposing (bit pointless, but...),
+        // b. or *this is already right-orthonormalized
+        if (!norm_computed_ || !is_orthonormal_) { right_orthonormalize(); }
+        auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
+        // FIXME
+    }
+    /*\@}*/
+
+    /*\@{ Arithmetic */
+    /*\@}*/
+
+    /*\@{ Iterators */
+    /*\@}*/
+
+    /*\@{ Getters */
+    /** Get Frobenius norm of tensor.
+     *
+     * @note This function in non-`const` as we might need to right-orthonormalize to
+     * compute the norm!
+     */
+    auto norm() -> T {
+        if (!norm_computed_ || !is_orthonormal_) { right_orthonormalize(); }
+        return norm_;
+    }
+
+    /** Get array of modes. */
+    auto modes() const -> std::array<size_type, D> { return modes_; }
+
+    /** Get array of ranks. */
+    auto ranks() const -> std::array<size_type, D + 1> { return ranks_; }
+
+    /** Get array of shapes of the tensor train cores. */
+    auto shapes() const -> std::array<shape_type, D> { return shapes_; }
+
+    /** Get maximum rank of the tensor train decomposition. */
+    auto max_rank() const -> size_type { return std::max(ranks_); }
+    /*\@}*/
+
+    /*\@{ Size and count statistics */
+    /** Get number of elements of compressed (tensor train) representation. */
+    auto size() const -> double { return c_count_; }
+
+    /** Get size, in GiB, of compressed (tensor train) representation. */
+    auto GiB() const -> double { return to_GiB<T>(c_count_); }
+
+    /** Get number of elements of uncompressed representation. */
+    auto uncompressed_size() const -> size_type { return u_count_; }
+
+    /** Get size, in GiB, of uncompressed representation. */
+    auto uncompressed_GiB() const -> double { return to_GiB<T>(u_count_); }
+
+    /** Get compression rate. */
+    auto compression() const -> double {
+        return (1.0 - static_cast<double>(c_count_) / static_cast<double>(u_count_));
+    }
+    /*\@}*/
+};
+
+enum class Orthonormal { No, Left, Right };
 template <typename T, std::size_t D> struct TensorTrain final {
     /** Indexing */
     using size_type = Eigen::Index;
