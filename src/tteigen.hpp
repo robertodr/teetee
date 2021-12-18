@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -15,6 +14,8 @@
 #include <Eigen/QR>
 #include <Eigen/SVD>
 #include <unsupported/Eigen/CXX11/Tensor>
+
+#include "utils.hpp"
 
 namespace tteigen {
 using Clock = std::chrono::steady_clock;
@@ -89,8 +90,7 @@ TensorTrain<T, D> tt_svd(Eigen::Tensor<T, D> &A, double epsilon = 1e-12) {
     using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 
     // norm of tensor --> gives us the threshold for the SVDs
-    const Eigen::Tensor<T, 0> A_norm = A.square().sum().sqrt();
-    const double A_F = A_norm.coeff();
+    const double A_F = frobenius_norm(A.data(), A.size());
 
     SPDLOG_INFO("Frobenius norm {}", A_F);
 

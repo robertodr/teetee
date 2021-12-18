@@ -8,8 +8,7 @@
 
 #include "eigen_utils.hpp"
 #include "tteigen.hpp"
-
-using namespace Catch::literals;
+#include "utils.hpp"
 
 // warning works only for D = 6!
 template <typename T>
@@ -108,8 +107,7 @@ TEST_CASE("tensor train format with SVD", "[tt][eigen][svd]") {
     // the reconstructed tensor
     Eigen::Tensor<double, 6> check = to_full(tt_A);
 
-    const Eigen::Tensor<double, 0> B_norm = B.square().sum().sqrt();
-    const double B_F = B_norm.coeff();
+    const double B_F = frobenius_norm(B.data(), B.size());
 
     Eigen::Tensor<double, 0> tmp = (check - B).square().sum().sqrt();
     const double check_norm = tmp.coeff();

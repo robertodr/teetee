@@ -8,6 +8,7 @@
 
 #include "eigen_utils.hpp"
 #include "tteigen.hpp"
+#include "utils.hpp"
 
 int main() {
     spdlog::set_pattern("[%Y-%m-%d %T][%^%l%$][TID: %t, PID: %P][%!@%s:%4#] %v");
