@@ -95,6 +95,24 @@ TEST_CASE("vertical unfolding of 3-mode tensor", "[tt][eigen][unfold][vertical]"
     REQUIRE(allclose(unfold, ref));
 }
 
+TEST_CASE("refactor tensor train format with SVD", "[tt][eigen][svd]") {
+    const auto A = tteigen::sample_tensor();
+    const double A_F = frobenius_norm(A.data(), A.size());
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = tteigen::TT(A, epsilon);
+
+    // the reconstructed tensor
+    Eigen::Tensor<double, 6> check = tt_A.to_full();
+
+    Eigen::Tensor<double, 0> tmp = (check - A).square().sum().sqrt();
+    const double check_norm = tmp.coeff();
+
+    REQUIRE(check_norm <= epsilon * A_F);
+
+    REQUIRE(allclose(check, A, 0.0, 1e-12));
+}
+
 TEST_CASE("tensor train format with SVD", "[tt][eigen][svd]") {
     auto A = tteigen::sample_tensor();
 

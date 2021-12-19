@@ -20,7 +20,7 @@
 namespace tteigen {
 using Clock = std::chrono::steady_clock;
 
-template <typename T, std::size_t D> class TT final {
+template <typename T, int D> class TT final {
     static_assert(std::is_floating_point_v<T>,
                   "TensorTrain can only be instantiated with floating point types");
 
@@ -31,6 +31,10 @@ public:
     using shape_type = std::array<size_type, 3>;
     /** Cores */
     using core_type = Eigen::Tensor<T, 3>;
+    /** Index pair (useful for contractions, offsets, extents) */
+    using index_pair_type = Eigen::IndexPair<Eigen::Index>;
+    /** Extent */
+    template <int n> using extent_type = Eigen::array<index_pair_type, n>;
 
 private:
     /** Whether the tensor train is right-orthonormal. */
@@ -101,7 +105,7 @@ private:
         auto rank = (svd.singularValues().array() >= delta).count();
         shapes_[0] = {1, modes_[0], rank};
         ranks_[1] = rank;
-        cores_[0] = shape_type(shapes_[0]);
+        cores_[0] = core_type(shapes_[0]);
         // only take the first rank columns of U to fill cores_[0]
         std::copy(svd.matrixU().data(),
                   svd.matrixU().data() + cores_[0].size(),
@@ -124,7 +128,7 @@ private:
                 Eigen::Map<matrix_type>(next.data(), ranks_[K] * n_rows, n_cols);
             // compute SVD of unfolding
             start = Clock::now();
-            svd = M.bdcSvd.compute(Eigen::ComputeThinU | Eigen::ComputeThinV);
+            svd = M.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
             stop = Clock::now();
             elapsed = stop - start;
             SPDLOG_INFO("SVD decomposition of mode {} in {}", K, elapsed);
@@ -166,6 +170,43 @@ private:
         SPDLOG_INFO("SVD decomposition of mode {} in {}", D - 1, elapsed);
     }
 
+    /*\@{ Recursive tensor train reconstruction to full format. */
+    /** Reconstruct full tensor from `*this` tensor train.
+     *
+     * @tparam mode the index of the tensor train core that is right operand in
+     * the contraction.
+     * @param[in] pre result of the previous contraction, i.e. a tensor with mode+1
+     * modes.
+     * @param[in,out] full the full format for `*this` tensor train.
+     */
+    template <int mode>
+    auto to_full(const Eigen::Tensor<T, mode + 1> &pre,
+                 Eigen::Tensor<T, D> &full) const -> void {
+        static_assert(mode >= 2, "mode must be at least two at this point!");
+        extent_type<1> cdims = {index_pair_type(mode, 0)};
+
+        Eigen::Tensor<T, mode + 2> post = pre.contract(cores_[mode], cdims);
+
+        this->to_full<mode + 1>(post, full);
+    }
+
+    /** Reconstruct full tensor from `*this` tensor train. Bottom of recursion.
+     *
+     * @param[in] pre result of the previous contraction, i.e. a tensor with mode+1
+     * modes.
+     * @param[in,out] full the full format for `*this` tensor train.
+     */
+    template <>
+    auto to_full<D - 1>(const Eigen::Tensor<T, D> &pre,
+                        Eigen::Tensor<T, D> &full) const -> void {
+        extent_type<1> cdims = {index_pair_type(D - 1, 0)};
+
+        // the contraction would be an Eigen::Tensor<T, D+1>, with last mode of size
+        // 1, hence the chipping.
+        full = pre.contract(cores_[D - 1], cdims).chip(0, D);
+    }
+    /*\@}*/
+
 public:
     /*\@{ Constructors */
     TT() = default;
@@ -183,7 +224,8 @@ public:
         }
     }
 
-    /** Construct a tensor train from given data, modes, and ranks.
+    /** *Destructively* generate a tensor train from given data, modes, and
+     * tolerance.
      *  @param[in] A dense tensor data in *natural descending order*
      *  @param[in] Is array of modes.
      *  @param[in] epsilon decomposition tolerance.
@@ -211,9 +253,9 @@ public:
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{Is} {
-        // compute norm of input tensor
         u_count_ = std::accumulate(
             modes_.cbegin(), modes_.cend(), std::multiplies<size_type>(), 1);
+        // compute norm of input tensor
         norm_ = frobenius_norm(A, u_count_);
 
         auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
@@ -222,6 +264,88 @@ public:
         ranks_.front() = ranks_.back() = 1;
 
         decompose(A, delta);
+    }
+
+    /** *Destructively* generate a tensor train from given tensor and tolerance.
+     *  @param[in] A dense tensor data in *natural descending order*
+     *  @param[in] epsilon decomposition tolerance.
+     *
+     *  Given a full tensor \f$\mathcal{X}\f$ and its TT decomposition
+     * \f$\bar{\mathcal{X}}\f$, the latter is constructed such that:
+     *
+     *  \f[
+     *     \| \mathcal{X} - \tilde{\mathcal{X}} \| \leq \epsilon \| \mathcal{X} \|
+     *  \f]
+     *
+     *  where \f$\tilde{\mathcal{X}}\f$ is the reconstructed full tensor and
+     *  \f$\| \cdot \|\f$ the Frobenius norm.
+     *  \f$\epsilon\f$ is user-provided and we compute the SVD truncation threshold
+     * from it, as follows:
+     *
+     *  \f[
+     *     \delta = \frac{\epsilon}{\sqrt{D-1}} \| \mathcal{X} \|
+     *  \f]
+     *
+     *  @warning The dense tensor data is assumed to be in natural descending
+     *  order. This is critical for the tensor train SVD algorithm to work correctly.
+     */
+    TT(Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+            : norm_computed_{true}
+            , epsilon_{epsilon}
+            , modes_{A.dimensions()} {
+        u_count_ = A.size();
+        // compute norm of input tensor
+        norm_ = frobenius_norm(A.data(), u_count_);
+
+        auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
+
+        // the "border" ranks are 1 by construction
+        ranks_.front() = ranks_.back() = 1;
+
+        decompose(A.data(), delta);
+    }
+
+    /** *Non-destructively* generate a tensor train from given tensor and tolerance.
+     *  @param[in] A dense tensor data in *natural descending order*
+     *  @param[in] epsilon decomposition tolerance.
+     *
+     *  Given a full tensor \f$\mathcal{X}\f$ and its TT decomposition
+     * \f$\bar{\mathcal{X}}\f$, the latter is constructed such that:
+     *
+     *  \f[
+     *     \| \mathcal{X} - \tilde{\mathcal{X}} \| \leq \epsilon \| \mathcal{X} \|
+     *  \f]
+     *
+     *  where \f$\tilde{\mathcal{X}}\f$ is the reconstructed full tensor and
+     *  \f$\| \cdot \|\f$ the Frobenius norm.
+     *  \f$\epsilon\f$ is user-provided and we compute the SVD truncation threshold
+     * from it, as follows:
+     *
+     *  \f[
+     *     \delta = \frac{\epsilon}{\sqrt{D-1}} \| \mathcal{X} \|
+     *  \f]
+     *
+     *  @warning The dense tensor data is assumed to be in natural descending
+     *  order. This is critical for the tensor train SVD algorithm to work correctly.
+     */
+    TT(const Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+            : norm_computed_{true}
+            , epsilon_{epsilon}
+            , modes_{A.dimensions()} {
+        // take copy of input tensor, so the tensor train is generated
+        // non-destructively.
+        Eigen::Tensor<T, D> B = A;
+
+        u_count_ = B.size();
+        // compute norm of input tensor
+        norm_ = frobenius_norm(B.data(), u_count_);
+
+        auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
+
+        // the "border" ranks are 1 by construction
+        ranks_.front() = ranks_.back() = 1;
+
+        decompose(B.data(), delta);
     }
     /*\@}*/
 
@@ -235,7 +359,9 @@ public:
      * Benner, P. Parallel Algorithms for Tensor Train Arithmetic. arXiv
      * [math.NA], 2020.
      *
-     * @note We use the Householder QR algorithm, as implemented in Eigen.
+     * @note We use the Householder QR algorithm, as implemented in Eigen. The
+     * successive QR decompositions are done in-place: the original data is
+     * destroyed in the right-orthonormalization process.
      */
     void right_orthonormalize() {
         // start from last core and go down to second mode
@@ -370,6 +496,19 @@ public:
         return (1.0 - static_cast<double>(c_count_) / static_cast<double>(u_count_));
     }
     /*\@}*/
+    /** Reconstruct full tensor from `*this` tensor train. */
+    auto to_full() const -> Eigen::Tensor<T, D> {
+        Eigen::Tensor<T, D> full(modes_);
+
+        extent_type<1> cdims = {index_pair_type(1, 0)};
+        // contract dimension 1 of first chipped core with dimension 0 of second core
+        Eigen::Tensor<T, 3> post = (cores_[0].chip(0, 0)).contract(cores_[1], cdims);
+
+        // recursion
+        this->to_full<2>(post, full);
+
+        return full;
+    }
 };
 
 enum class Orthonormal { No, Left, Right };
