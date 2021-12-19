@@ -454,7 +454,7 @@ public:
     /*\@{ Iterators */
     /*\@}*/
 
-    /*\@{ Getters */
+    /*\@{ Getters/setters */
     /** Get Frobenius norm of tensor.
      *
      * @note This function in non-`const` as we might need to right-orthonormalize to
@@ -465,14 +465,42 @@ public:
         return norm_;
     }
 
-    /** Get array of modes. */
+    /** Get array of mode sizes. */
     auto modes() const -> std::array<size_type, D> { return modes_; }
+    /** Get size of i-th mode.
+     *
+     * @param[in] i requested mode.
+     */
+    auto mode(std::size_t i) const -> size_type { return modes_[i]; }
 
     /** Get array of ranks. */
     auto ranks() const -> std::array<size_type, D + 1> { return ranks_; }
+    /** Get i-th rank.
+     *
+     * @param[in] i requested mode.
+     */
+    auto rank(std::size_t i) const -> size_type { return ranks_[i]; }
 
     /** Get array of shapes of the tensor train cores. */
     auto shapes() const -> std::array<shape_type, D> { return shapes_; }
+    /** Get shape of i-th tensor train core.
+     *
+     * @param[in] i requested core.
+     */
+    auto shape(std::size_t i) const -> shape_type { return shapes_[i]; }
+
+    /** Get array of tensor train cores. */
+    auto cores() const -> std::array<core_type, D> { return cores_; }
+    /** Get mutable reference to i-th tensor train core.
+     *
+     * @param[in] i requested core.
+     */
+    auto core(std::size_t i) -> core_type & { return cores_[i]; }
+    /** Get immutable reference to i-th tensor train core.
+     *
+     * @param[in] i requested core.
+     */
+    auto core(std::size_t i) const -> const core_type & { return cores_[i]; }
 
     /** Get maximum rank of the tensor train decomposition. */
     auto max_rank() const -> size_type { return std::max(ranks_); }
@@ -509,6 +537,40 @@ public:
 
         return full;
     }
+
+    /*\@{ Unfoldings */
+    /** Horizontal unfolding of i-th tensor core.
+     *
+     * @param[in] i core to unfold
+     *
+     *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times
+     *  M}\f$, the horizontal unfolding generates a matrix
+     *  \f$\mathcal{H}(\mathcal{T}) \in \mathbb{K}^{N\times LM}$ by
+     *  concatenating the slices \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in
+     *  \mathbb{K}^{N\times M}\f$ _horizontally_.
+     */
+    auto horizontal_unfolding(std::size_t i) const -> matrix_type {
+        const auto n_rows = shapes_[i][0];
+        const auto n_cols = shapes_[i][1] * shapes_[i][2];
+
+        return Eigen::Map<matrix_type>(cores_[i].data(), n_rows, n_cols);
+    }
+
+    /** Vertical unfolding of i-th tensor core.
+     *
+     *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times M}\f$,
+     *  the vertical unfolding generates a matrix \f$\mathcal{V}(\mathcal{T}) \in
+     * \mathbb{K}^{NL\times M}$ by concatenating the slices
+     * \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in \mathbb{K}^{N\times M}\f$
+     * _vertically_.
+     */
+    auto vertical_unfolding(std::size_t i) const -> matrix_type {
+        const auto n_rows = shapes_[i][0] * shapes_[i][1];
+        const auto n_cols = shapes_[i][2];
+
+        return Eigen::Map<matrix_type>(cores_[i].data(), n_rows, n_cols);
+    }
+    /*\@}*/
 };
 
 enum class Orthonormal { No, Left, Right };
