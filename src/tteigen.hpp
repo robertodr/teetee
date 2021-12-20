@@ -31,6 +31,8 @@ public:
     using shape_type = std::array<size_type, 3>;
     /** Cores */
     using core_type = Eigen::Tensor<T, 3>;
+    /** Tensor core unfoldings */
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
     /** Index pair (useful for contractions, offsets, extents) */
     using index_pair_type = Eigen::IndexPair<Eigen::Index>;
     /** Extent */

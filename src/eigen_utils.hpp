@@ -24,28 +24,34 @@ inline auto allclose(const Eigen::Tensor<T, D> &a,
     return tmp.coeff();
 }
 
-namespace tteigen {
-template <typename Indexing = ColMajor<6>,
-          std::size_t d0 = 5,
-          std::size_t d1 = 5,
-          std::size_t d2 = 5,
-          std::size_t d3 = 5,
-          std::size_t d4 = 5,
-          std::size_t d5 = 5>
-auto sample_tensor() -> Eigen::Tensor<double, 6> {
-    Indexing linear_id(std::array<std::size_t, 6>{d0, d1, d2, d3, d4, d5});
+// TODO refactor:
+// - sample_tensor should return the discretization of a function (passed as
+// parameter)
+//   over a cubic grid in D-dimensions.
+// - grid funciton produces linear index and value of function.
 
-    auto count = d0 * d1 * d2 * d3 * d4 * d5;
+// FIXME alignment!
+namespace tteigen {
+template <std::size_t... Ds,
+          template <std::size_t> class Indexing = ColMajor,
+          std::size_t N = sizeof...(Ds)>
+auto sample_tensor() -> Eigen::Tensor<double, N> {
+    auto count = (1 * ... * Ds);
+
+    auto dimensions = std::array<std::size_t, N>{Ds...};
+    Indexing<N> linear_id(dimensions);
+
     auto buffer = static_cast<double *>(
         std::aligned_alloc(alignof(double), sizeof(double) * count));
 
+    // FIXME generalize! this is only really valid for 6-mode tensors!
     // fill
-    for (std::size_t i0 = 0; i0 < d0; ++i0) {
-        for (std::size_t i1 = 0; i1 < d1; ++i1) {
-            for (std::size_t i2 = 0; i2 < d2; ++i2) {
-                for (std::size_t i3 = 0; i3 < d3; ++i3) {
-                    for (std::size_t i4 = 0; i4 < d4; ++i4) {
-                        for (std::size_t i5 = 0; i5 < d5; ++i5) {
+    for (std::size_t i0 = 0; i0 < dimensions[0]; ++i0) {
+        for (std::size_t i1 = 0; i1 < dimensions[1]; ++i1) {
+            for (std::size_t i2 = 0; i2 < dimensions[2]; ++i2) {
+                for (std::size_t i3 = 0; i3 < dimensions[3]; ++i3) {
+                    for (std::size_t i4 = 0; i4 < dimensions[4]; ++i4) {
+                        for (std::size_t i5 = 0; i5 < dimensions[5]; ++i5) {
                             auto idx = linear_id({i0, i1, i2, i3, i4, i5});
                             buffer[idx] = value(i0, i1, i2, i3, i4, i5);
                         }
@@ -55,7 +61,7 @@ auto sample_tensor() -> Eigen::Tensor<double, 6> {
         }
     }
 
-    Eigen::TensorMap<Eigen::Tensor<double, 6>> A(buffer, d0, d1, d2, d3, d4, d5);
+    Eigen::TensorMap<Eigen::Tensor<double, N>> A(buffer, dimensions);
 
     return A;
 }

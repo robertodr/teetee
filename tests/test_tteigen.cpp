@@ -96,7 +96,7 @@ TEST_CASE("vertical unfolding of 3-mode tensor", "[tt][eigen][unfold][vertical]"
 }
 
 TEST_CASE("refactor tensor train format with SVD", "[tt][eigen][svd]") {
-    const auto A = tteigen::sample_tensor();
+    const auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
     const double A_F = frobenius_norm(A.data(), A.size());
 
     const auto epsilon = 1.0e-12;
@@ -114,7 +114,7 @@ TEST_CASE("refactor tensor train format with SVD", "[tt][eigen][svd]") {
 }
 
 TEST_CASE("tensor train format with SVD", "[tt][eigen][svd]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = A;
@@ -136,7 +136,7 @@ TEST_CASE("tensor train format with SVD", "[tt][eigen][svd]") {
 }
 
 TEST_CASE("left-multiplication by a scalar", "[tt][eigen][scalar-left-multiply]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = 2.5 * A;
@@ -159,7 +159,7 @@ TEST_CASE("left-multiplication by a scalar", "[tt][eigen][scalar-left-multiply]"
 }
 
 TEST_CASE("right-multiplication by a scalar", "[tt][eigen][scalar-right-multiply]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = A * 2.5;
@@ -183,7 +183,7 @@ TEST_CASE("right-multiplication by a scalar", "[tt][eigen][scalar-right-multiply
 
 TEST_CASE("sum of two tensor trains, without rounding",
           "[tt][eigen][sum][no-rounding]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = A + A;
@@ -207,7 +207,7 @@ TEST_CASE("sum of two tensor trains, without rounding",
 
 TEST_CASE("Hadamard (elementwise) product of two tensor trains, without rounding",
           "[tt][eigen][hadamard][no-rounding]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = A * A;
@@ -231,7 +231,7 @@ TEST_CASE("Hadamard (elementwise) product of two tensor trains, without rounding
 
 TEST_CASE("right orthonormalization of tensor train",
           "[tt][eigen][right-orthonormalization]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     // take a copy so we can do elementwise comparison
     const Eigen::Tensor<double, 6> B = A;
@@ -256,7 +256,7 @@ TEST_CASE("right orthonormalization of tensor train",
 }
 
 TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
-    auto A = tteigen::sample_tensor();
+    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
     const Eigen::Tensor<double, 0> A_norm = A.square().sum().sqrt();
     const double A_F = A_norm.coeff();
