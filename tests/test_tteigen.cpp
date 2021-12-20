@@ -255,6 +255,29 @@ TEST_CASE("right orthonormalization of tensor train",
     REQUIRE(allclose(check, B, 0.0, 1e-12));
 }
 
+TEST_CASE("refactor right orthonormalization of tensor train",
+          "[tt][eigen][right-orthonormalization]") {
+    const auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
+    const double A_F = frobenius_norm(A.data(), A.size());
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = tteigen::TT(A, epsilon);
+
+    tt_A.right_orthonormalize();
+
+    // the reconstructed tensor
+    Eigen::Tensor<double, 6> check = tt_A.to_full();
+
+    Eigen::Tensor<double, 0> tmp = (check - A).square().sum().sqrt();
+    const double check_norm = tmp.coeff();
+
+    REQUIRE(check_norm <= epsilon * A_F);
+
+    REQUIRE(allclose(check, A, 0.0, 1e-12));
+
+    // FIXME also test that all the cores are row orthonormal!
+}
+
 TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
     auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
 
@@ -267,6 +290,18 @@ TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
     auto tt_A_orth = tteigen::right_orthonormalize(tt_A);
 
     REQUIRE(tt_A_orth.norm() == Approx(A_F));
+}
+
+TEST_CASE("refactor Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
+    const auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
+    const double A_F = frobenius_norm(A.data(), A.size());
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = tteigen::TT(A, epsilon);
+
+    tt_A.right_orthonormalize();
+
+    REQUIRE(tt_A.norm() == Approx(A_F));
 }
 
 /*

@@ -22,7 +22,7 @@ using Clock = std::chrono::steady_clock;
 
 template <typename T, int D> class TT final {
     static_assert(std::is_floating_point_v<T>,
-                  "TensorTrain can only be instantiated with floating point types");
+                  "TensorTrain can only be instantiated with floating point types!");
 
 public:
     /** Indexing */
@@ -189,7 +189,7 @@ private:
 
         Eigen::Tensor<T, mode + 2> post = pre.contract(cores_[mode], cdims);
 
-        this->to_full<mode + 1>(post, full);
+        to_full<mode + 1>(post, full);
     }
 
     /** Reconstruct full tensor from `*this` tensor train. Bottom of recursion.
@@ -355,7 +355,7 @@ public:
      *
      * @note It is not necessary to implement left orthonormalization.
      */
-    /** Right-orthonormalize `*this` tensor train.
+    /** *Destructive* right-orthonormalization of `*this` tensor train.
      *
      * This is an implementation of algorithm 2.1 in: Al Daas, H.; Ballard, G.;
      * Benner, P. Parallel Algorithms for Tensor Train Arithmetic. arXiv
@@ -367,45 +367,50 @@ public:
      */
     void right_orthonormalize() {
         // start from last core and go down to second mode
-        // for (auto i = D - 1; i > 0; --i) {
-        //    // why not auto? .transpose() returns an expression and hence its QR is
-        //    // not well-defined.  To avoid this issue, we need to instantiate it as
-        //    // a matrix.
-        //    matrix_type Ht = horizontal_unfolding(Y.cores[i]).transpose();
-        //    auto m = Ht.rows();
-        //    auto n = Ht.cols();
+        for (auto i = D - 1; i > 0; --i) {
+            // shape of horizontal unfolding of current, i-th, core
+            auto h_rows = shapes_[i][0];
+            auto h_cols = shapes_[i][1] * shapes_[i][2];
+            // *transpose* of horizontal unfolding of current, i-th, core
+            matrix_type Ht =
+                Eigen::Map<matrix_type>(cores_[i].data(), h_rows, h_cols)
+                    .transpose();
 
-        //    auto start = Clock::now();
-        //    auto qr = Ht.householderQr();
-        //    auto stop = Clock::now();
-        //    std::chrono::duration<double, std::milli> elapsed = stop - start;
-        //    SPDLOG_INFO("QR decomposition of mode {} in {}", i, elapsed);
+            // in-place Householder QR decomposition
+            Eigen::HouseholderQR<Eigen::Ref<matrix_type>> qr(Ht);
 
-        //    // get thin Q factor...
-        //    matrix_type Q1 = Eigen::MatrixXd::Identity(m, n);
-        //    qr.householderQ().applyThisOnTheLeft(Q1);
-        //    // ...transpose it...
-        //    matrix_type Q1t = Q1.transpose();
-        //    // ...copy it to the current core
-        //    std::copy(Q1t.data(), Q1t.data() + Y.cores[i].size(),
-        //    Y.cores[i].data());
+            // sequence of Householder reflectors
+            auto hh = qr.householderQ();
+            // Q1 is the *thin* Q factor and Q1t its transpose.
+            matrix_type Q1t = matrix_type::Identity(h_rows, h_cols);
+            // we compute it by applying hh on the right
+            // of the correctly dimensioned identity matrix
+            Q1t.applyOnTheRight(hh.transpose());
+            // set the result to be the *transpose* of the horizontal unfolding of
+            // current, i-th, core
+            std::copy(Q1t.data(), Q1t.data() + cores_[i].size(), cores_[i].data());
 
-        //    // R factors for thin QR
-        //    matrix_type R = qr.matrixQR()
-        //                        .topLeftCorner(n, n)
-        //                        .template triangularView<Eigen::Upper>();
+            // R1 factor (*thin* R)
+            matrix_type R1 = qr.matrixQR()
+                                 .topLeftCorner(h_rows, h_rows)
+                                 .template triangularView<Eigen::Upper>();
 
-        //    matrix_type next = vertical_unfolding(X.cores[i - 1]) * R.transpose();
-        //    // ...and set the result to be the vertical unfolding of the next core
-        //    of
-        //    // Y
-        //    std::copy(next.data(),
-        //              next.data() + Y.cores[i - 1].size(),
-        //              Y.cores[i - 1].data());
-        //}
+            // shape of vertical unfolding of next, (i-1)-th, core
+            auto v_rows = shapes_[i - 1][0] * shapes_[i - 1][1];
+            auto v_cols = shapes_[i - 1][2];
+            // vertical unfolding of next, (i-1)-th, core times transpose of R factor
+            matrix_type next =
+                Eigen::Map<matrix_type>(cores_[i - 1].data(), v_rows, v_cols) *
+                R1.transpose();
+            // set the result to be the vertical unfolding of the next core
+            std::copy(next.data(),
+                      next.data() + cores_[i - 1].size(),
+                      cores_[i - 1].data());
+        }
 
         is_orthonormal_ = true;
 
+        // compute norm while we're at it
         norm_ = frobenius_norm(cores_[0].data(), cores_[0].size());
         norm_computed_ = true;
     }
@@ -535,7 +540,7 @@ public:
         Eigen::Tensor<T, 3> post = (cores_[0].chip(0, 0)).contract(cores_[1], cdims);
 
         // recursion
-        this->to_full<2>(post, full);
+        to_full<2>(post, full);
 
         return full;
     }
