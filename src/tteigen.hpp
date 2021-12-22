@@ -456,6 +456,39 @@ public:
     /*\@}*/
 
     /*\@{ Arithmetic */
+    /** *Non-destructive* scaling by a scalar
+     *
+     * @tparam U scalar type of the scalar.
+     * @param[in] alpha scalar.
+     * @return Y scaled tensor train.
+     */
+    template <typename U>
+    auto scale(U alpha) const -> TT<typename std::common_type<U, T>::type, D> {
+        static_assert(std::is_floating_point_v<U>,
+                      "Scaling factor alpha can only be a floating point type!");
+
+        // common type between U and T
+        using V = typename std::common_type<U, T>::type;
+
+        TT<V, D> Y = *this;
+        // Eigen::Tensor does not implement *=
+        Y.cores_[0] = alpha * Y.cores_[0];
+
+        return Y;
+    }
+
+    /** *Destructive* scaling by a scalar
+     *
+     * @tparam U scalar type of the scalar.
+     * @param[in] alpha scalar.
+     */
+    template <typename U> auto scale(U alpha) -> void {
+        static_assert(std::is_floating_point_v<U>,
+                      "Scaling factor alpha can only be a floating point type!");
+
+        // Eigen::Tensor does not implement *=
+        cores_[0] = alpha * cores_[0];
+    }
     /*\@}*/
 
     /*\@{ Iterators */
@@ -579,6 +612,34 @@ public:
     }
     /*\@}*/
 };
+
+/** *Non-destructive* scaling by a scalar (on the left)
+ *
+ * @tparam T scalar type of the tensor train.
+ * @tparam U scalar type of the scalar.
+ * @tparam D number of modes in the tensor train.
+ * @param[in] alpha scalar.
+ * @param[in] X tensor train.
+ * @return Y scaled tensor train.
+ */
+template <typename T, typename U, int D>
+TT<typename std::common_type<U, T>::type, D> operator*(U alpha, const TT<T, D> &X) {
+    return X.scale(alpha);
+}
+
+/** *Non-destructive* scaling by a scalar (on the right)
+ *
+ * @tparam T scalar type of the tensor train.
+ * @tparam U scalar type of the scalar.
+ * @tparam D number of modes in the tensor train.
+ * @param[in] X tensor train.
+ * @param[in] alpha scalar.
+ * @return Y scaled tensor train.
+ */
+template <typename T, typename U, int D>
+TT<typename std::common_type<U, T>::type, D> operator*(const TT<T, D> &X, U alpha) {
+    return X.scale(alpha);
+}
 
 enum class Orthonormal { No, Left, Right };
 template <typename T, std::size_t D> struct TensorTrain final {
