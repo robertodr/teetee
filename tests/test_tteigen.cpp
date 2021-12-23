@@ -186,6 +186,35 @@ TEST_CASE("Hadamard (elementwise) product of two tensor trains, without rounding
     REQUIRE(allclose(check, B, 0.0, 1e-12));
 }
 
+TEST_CASE("Hadamard (elementwise) product of two tensor trains, with rounding",
+          "[tt][eigen][hadamard][rounding]") {
+    auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
+
+    // take a copy so we can do elementwise comparison
+    const Eigen::Tensor<double, 6> B = A * A;
+    const double B_F = frobenius_norm(B.data(), B.size());
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = TensorTrain(A, epsilon);
+
+    auto had_A = hadamard_product(tt_A, tt_A, epsilon);
+
+    // ranks are squared
+    for (auto i = 0; i < 7; ++i) {
+        REQUIRE(had_A.rank(i) <= tt_A.rank(i) * tt_A.rank(i));
+    }
+
+    // the reconstructed tensor
+    Eigen::Tensor<double, 6> check = had_A.to_full();
+
+    Eigen::Tensor<double, 0> tmp = (check - B).square().sum().sqrt();
+    const double check_norm = tmp.coeff();
+
+    REQUIRE(check_norm <= epsilon * B_F);
+
+    REQUIRE(allclose(check, B, 0.0, 1e-12));
+}
+
 TEST_CASE("right orthonormalization of tensor train",
           "[tt][eigen][right-orthonormalization]") {
     const auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
