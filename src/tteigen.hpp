@@ -20,7 +20,24 @@
 namespace tteigen {
 using Clock = std::chrono::steady_clock;
 
-template <typename T, int D> class TT final {
+namespace tteigen {
+/**
+ *
+ *  Horizontal unfolding
+ *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times
+ *  M}\f$, the horizontal unfolding generates a matrix
+ *  \f$\mathcal{H}(\mathcal{T}) \in \mathbb{K}^{N\times LM}$ by
+ *  concatenating the slices \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in
+ *  \mathbb{K}^{N\times M}\f$ _horizontally_.
+ *
+ *  Vertical unfolding
+ *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times M}\f$,
+ *  the vertical unfolding generates a matrix \f$\mathcal{V}(\mathcal{T}) \in
+ * \mathbb{K}^{NL\times M}$ by concatenating the slices
+ * \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in \mathbb{K}^{N\times M}\f$
+ * _vertically_.
+ */
+template <typename T, int D> class TensorTrain final {
     static_assert(std::is_floating_point_v<T>,
                   "TensorTrain can only be instantiated with floating point types!");
 
@@ -39,6 +56,8 @@ public:
     template <int n> using extent_type = Eigen::array<index_pair_type, n>;
 
 private:
+    using Clock = std::chrono::steady_clock;
+
     /** Whether the tensor train is right-orthonormal. */
     bool is_orthonormal_{false};
     /** Whether we computed the norm for this tensor train. */
@@ -116,9 +135,8 @@ private:
 
         // prepare next unfolding: only use first rank singular values and first rank
         // columns of V
-        matrix_type next =
-            svd.singularValues().head(rank).asDiagonal() *
-            svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
+        matrix_type next = svd.singularValues().head(rank).asDiagonal() *
+                           svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).adjoint();
 
         // go through the modes (dimensions) in the tensor
         for (int K = 1; K < D - 1; ++K) {
@@ -157,7 +175,7 @@ private:
             // prepare next unfolding: only use first rank singular values and first
             // rank columns of V
             next = svd.singularValues().head(rank).asDiagonal() *
-                   svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).transpose();
+                   svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).adjoint();
         }
 
         shapes_[D - 1] = {ranks_[D - 1], modes_[D - 1], ranks_[D]};
@@ -211,13 +229,13 @@ private:
 
 public:
     /*\@{ Constructors */
-    TT() = default;
+    TensorTrain() = default;
 
     /** Zero-initialize a tensor train from given modes and ranks.
      *  @param[in] Is array of modes.
      *  @param[in] Rs array of ranks.
      */
-    TT(std::array<size_type, D> Is, std::array<size_type, D + 1> Rs)
+    TensorTrain(std::array<size_type, D> Is, std::array<size_type, D + 1> Rs)
             : modes_(Is)
             , ranks_(Rs) {
         for (auto K = 0; K < D; ++K) {
@@ -229,7 +247,7 @@ public:
     /** Zero-initialize a tensor train from given shapes.
      *  @param[in] Ss array of shapes.
      */
-    explicit TT(std::array<size_type, D> Ss)
+    explicit TensorTrain(std::array<size_type, D> Ss)
             : shapes_(Ss) {
         for (auto K = 0; K < D; ++K) {
             ranks_[K] = shapes_[K][0];
@@ -264,7 +282,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TT(T *A, std::array<size_type, D> Is, T epsilon = 1e-12)
+    TensorTrain(T *A, std::array<size_type, D> Is, T epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{Is} {
@@ -304,7 +322,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TT(Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+    TensorTrain(Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{A.dimensions()} {
@@ -343,7 +361,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TT(const Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+    TensorTrain(const Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{A.dimensions()} {
@@ -374,9 +392,7 @@ public:
      * Benner, P. Parallel Algorithms for Tensor Train Arithmetic. arXiv
      * [math.NA], 2020.
      *
-     * @note We use the Householder QR algorithm, as implemented in Eigen. The
-     * successive QR decompositions are done in-place: the original data is
-     * destroyed in the right-orthonormalization process.
+     * @note We use the Householder QR algorithm, as implemented in Eigen.
      */
     void right_orthonormalize() {
         // start from last core and go down to second mode
@@ -384,22 +400,21 @@ public:
             // shape of horizontal unfolding of current, i-th, core
             auto h_rows = shapes_[i][0];
             auto h_cols = shapes_[i][1] * shapes_[i][2];
-            // *transpose* of horizontal unfolding of current, i-th, core
+            // *adjoint* of horizontal unfolding of current, i-th, core
             matrix_type Ht =
-                Eigen::Map<matrix_type>(cores_[i].data(), h_rows, h_cols)
-                    .transpose();
+                Eigen::Map<matrix_type>(cores_[i].data(), h_rows, h_cols).adjoint();
 
-            // in-place Householder QR decomposition
-            Eigen::HouseholderQR<Eigen::Ref<matrix_type>> qr(Ht);
+            // Householder QR decomposition
+            Eigen::HouseholderQR<matrix_type> qr(Ht);
 
             // sequence of Householder reflectors
             auto hh = qr.householderQ();
-            // Q1 is the *thin* Q factor and Q1t its transpose.
+            // Q1 is the *thin* Q factor and Q1t its adjoint.
             matrix_type Q1t = matrix_type::Identity(h_rows, h_cols);
             // we compute it by applying hh on the right
             // of the correctly dimensioned identity matrix
-            Q1t.applyOnTheRight(hh.transpose());
-            // set the result to be the *transpose* of the horizontal unfolding of
+            Q1t.applyOnTheRight(hh.adjoint());
+            // set the result to be the *adjoint* of the horizontal unfolding of
             // current, i-th, core
             std::copy(Q1t.data(), Q1t.data() + cores_[i].size(), cores_[i].data());
 
@@ -411,10 +426,10 @@ public:
             // shape of vertical unfolding of next, (i-1)-th, core
             auto v_rows = shapes_[i - 1][0] * shapes_[i - 1][1];
             auto v_cols = shapes_[i - 1][2];
-            // vertical unfolding of next, (i-1)-th, core times transpose of R factor
+            // vertical unfolding of next, (i-1)-th, core times adjoint of R factor
             matrix_type next =
                 Eigen::Map<matrix_type>(cores_[i - 1].data(), v_rows, v_cols) *
-                R1.transpose();
+                R1.adjoint();
             // set the result to be the vertical unfolding of the next core
             std::copy(next.data(),
                       next.data() + cores_[i - 1].size(),
@@ -456,15 +471,82 @@ public:
      * @note We use the block divide-and-conquer SVD algorithm, as implemented in
      * Eigen.
      */
-    void rounding(T epsilon) {
+    void round(T epsilon) {
         // reset epsilon_
         epsilon_ = epsilon;
+
         // Check whether we have the norm of *this already, because:
         // a. either we are rounding right after decomposing (bit pointless, but...),
         // b. or *this is already right-orthonormalized
+        // if not, right-orhtonormalize and compute the norm.
         if (!norm_computed_ || !is_orthonormal_) { right_orthonormalize(); }
         auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
-        // FIXME
+        SPDLOG_INFO("SVD threshold = {:6e}", delta);
+
+        ranks_.front() = ranks_.back() = 1;
+        for (auto i = 0; i < D - 1; ++i) {
+            // shape of vertical unfolding
+            auto v_rows = ranks_[i] * modes_[i];
+            auto v_cols = ranks_[i + 1];
+            // vertical unfolding
+            matrix_type V =
+                Eigen::Map<matrix_type>(cores_[i].data(), v_rows, v_cols);
+
+            // compute SVD of vertical unfolding
+            auto start = Clock::now();
+            auto svd = V.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+            auto stop = Clock::now();
+            std::chrono::duration<double, std::milli> elapsed = stop - start;
+
+            SPDLOG_INFO("SVD decomposition of mode {} in {}", i, elapsed);
+
+            if (svd.info() != Eigen::Success) {
+                SPDLOG_ERROR(
+                    "SVD decomposition of mode {} (out of {}) did not succeed!",
+                    i,
+                    D);
+                std::abort();
+            }
+
+            // re-define ranks and cores
+            auto rank = (svd.singularValues().array() >= delta).count();
+            ranks_[i + 1] = rank;
+            shapes_[i] = {ranks_[i], modes_[i], ranks_[i + 1]};
+            // resize current core
+            cores_[i] = core_type(shapes_[i]);
+            // only take the first rank columns of U to fill cores_[i]
+            std::copy(svd.matrixU().data(),
+                      svd.matrixU().data() + cores_[i].size(),
+                      cores_[i].data());
+
+            // shape of horizontal unfolding
+            auto h_rows = shapes_[i + 1][0];
+            auto h_cols = shapes_[i + 1][1] * shapes_[i + 1][2];
+            // horizontal unfolding
+            matrix_type H =
+                Eigen::Map<matrix_type>(cores_[i + 1].data(), h_rows, h_cols);
+
+            matrix_type next =
+                svd.singularValues().head(rank).asDiagonal() *
+                svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).adjoint() * H;
+
+            // reshape next core
+            cores_[i + 1] =
+                core_type(shape_type{ranks_[i + 1],
+                                     modes_[i + 1],
+                                     H.size() / (ranks_[i + 1], modes_[i + 1])});
+            // copy into next core
+            std::copy(next.data(), next.data() + next.size(), cores_[i + 1].data());
+        }
+        // fix shape of last core
+        shapes_[D - 1] = {ranks_[D - 1], modes_[D - 1], ranks_[D]};
+
+        // reset compressed count of elements
+        c_count_ = 0;
+        for (const auto &c : cores_) { c_count_ += c.size(); }
+
+        // after rounding, the tensor is not right-orthonormal anymore
+        is_orthonormal_ = false;
     }
     /*\@}*/
 
@@ -476,14 +558,15 @@ public:
      * @return Y scaled tensor train.
      */
     template <typename U>
-    auto scale(U alpha) const -> TT<typename std::common_type<U, T>::type, D> {
+    auto scale(U alpha) const
+        -> TensorTrain<typename std::common_type<U, T>::type, D> {
         static_assert(std::is_floating_point_v<U>,
                       "Scaling factor alpha can only be a floating point type!");
 
         // common type between U and T
         using V = typename std::common_type<U, T>::type;
 
-        TT<V, D> Y = *this;
+        TensorTrain<V, D> Y = *this;
         // Eigen::Tensor does not implement *=
         Y.cores_[0] = alpha * Y.cores_[0];
 
@@ -590,40 +673,6 @@ public:
 
         return full;
     }
-
-    /*\@{ Unfoldings */
-    /** Horizontal unfolding of i-th tensor core.
-     *
-     * @param[in] i core to unfold
-     *
-     *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times
-     *  M}\f$, the horizontal unfolding generates a matrix
-     *  \f$\mathcal{H}(\mathcal{T}) \in \mathbb{K}^{N\times LM}$ by
-     *  concatenating the slices \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in
-     *  \mathbb{K}^{N\times M}\f$ _horizontally_.
-     */
-    auto horizontal_unfolding(std::size_t i) const -> matrix_type {
-        const auto n_rows = shapes_[i][0];
-        const auto n_cols = shapes_[i][1] * shapes_[i][2];
-
-        return Eigen::Map<matrix_type>(cores_[i].data(), n_rows, n_cols);
-    }
-
-    /** Vertical unfolding of i-th tensor core.
-     *
-     *  Given a 3-mode tensor \f$\mathcal{T} \in \mathbb{K}^{N\times L \times M}\f$,
-     *  the vertical unfolding generates a matrix \f$\mathcal{V}(\mathcal{T}) \in
-     * \mathbb{K}^{NL\times M}$ by concatenating the slices
-     * \f$\mathbf{X}_{\mathcal{T}}(:, l, :) \in \mathbb{K}^{N\times M}\f$
-     * _vertically_.
-     */
-    auto vertical_unfolding(std::size_t i) const -> matrix_type {
-        const auto n_rows = shapes_[i][0] * shapes_[i][1];
-        const auto n_cols = shapes_[i][2];
-
-        return Eigen::Map<matrix_type>(cores_[i].data(), n_rows, n_cols);
-    }
-    /*\@}*/
 };
 
 /** *Non-destructive* scaling by a scalar (on the left)
@@ -636,7 +685,8 @@ public:
  * @return Y scaled tensor train.
  */
 template <typename T, typename U, int D>
-auto operator*(U alpha, const TT<T, D> &X) -> TT<decltype(U() * T()), D> {
+auto operator*(U alpha, const TensorTrain<T, D> &X)
+    -> TensorTrain<decltype(U() * T()), D> {
     return X.scale(alpha);
 }
 
@@ -650,7 +700,8 @@ auto operator*(U alpha, const TT<T, D> &X) -> TT<decltype(U() * T()), D> {
  * @return Y scaled tensor train.
  */
 template <typename T, typename U, int D>
-auto operator*(const TT<T, D> &X, U alpha) -> TT<decltype(T() * U()), D> {
+auto operator*(const TensorTrain<T, D> &X, U alpha)
+    -> TensorTrain<decltype(T() * U()), D> {
     return X.scale(alpha);
 }
 
@@ -668,8 +719,9 @@ template <typename T,
           typename U,
           int D,
           typename V = typename std::common_type<U, T>::type>
-auto sum(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
-    using size_type = typename TT<V, D>::size_type;
+auto sum(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y)
+    -> TensorTrain<V, D> {
+    using size_type = typename TensorTrain<V, D>::size_type;
 
     // left and right operands must be congruent: their modes array must be the same
     if (X.modes() != Y.modes()) { std::abort(); }
@@ -680,7 +732,7 @@ auto sum(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
     ranks.front() = ranks.back() = 1;
     for (auto i = 1; i < D; ++i) { ranks[i] = X.rank(i) + Y.rank(i); }
 
-    TT<V, D> Z(X.modes(), ranks);
+    TensorTrain<V, D> Z(X.modes(), ranks);
 
     Eigen::array<size_type, 3> off_X = {0, 0, 0};
     Eigen::array<size_type, 3> off_Y;
@@ -693,6 +745,31 @@ auto sum(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
         off_Y = {Z.shape(i)[0] - Y.shape(i)[0], 0, Z.shape(i)[2] - Y.shape(i)[2]};
         Z.core(i).slice(off_Y, Y.shape(i)) = Y.core(i);
     }
+
+    return Z;
+}
+
+/** Sum of two tensor trains, with rounding.
+ *
+ * @tparam T scalar type of the left tensor train.
+ * @tparam U scalar type of the right tensor train.
+ * @tparam D number of modes in the tensor trains.
+ * @tparam V scalar type of the result tensor train.
+ * @param[in] X tensor train.
+ * @param[in] Y tensor train.
+ * @param[in] epsilon rounding threshold.
+ * @return Z the sum tensor train.
+ */
+template <typename T,
+          typename U,
+          int D,
+          typename V = typename std::common_type<U, T>::type>
+auto sum(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y, V epsilon)
+    -> TensorTrain<V, D> {
+    auto Z = sum(X, Y);
+
+    // perform rounding.
+    Z.round(epsilon);
 
     return Z;
 }
@@ -711,8 +788,9 @@ template <typename T,
           typename U,
           int D,
           typename V = typename std::common_type<U, T>::type>
-auto hadamard_product(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
-    using size_type = typename TT<V, D>::size_type;
+auto hadamard_product(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y)
+    -> TensorTrain<V, D> {
+    using size_type = typename TensorTrain<V, D>::size_type;
 
     // left and right operands must be congruent: their modes array must be the same
     if (X.modes() != Y.modes()) { std::abort(); }
@@ -722,15 +800,12 @@ auto hadamard_product(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
     std::array<size_type, D + 1> ranks;
     for (auto i = 0; i < D + 1; ++i) { ranks[i] = X.rank(i) * Y.rank(i); }
 
-    SPDLOG_INFO("X.ranks {} Y.ranks {}", X.ranks(), Y.ranks());
-    SPDLOG_INFO("ranks {}", ranks);
-
-    TT<V, D> Z(X.modes(), ranks);
+    TensorTrain<V, D> Z(X.modes(), ranks);
 
     // compute cores as the tensor product of the slices
 
-    using index_pair_type = typename TT<V, D>::index_pair_type;
-    using extent_type = typename TT<V, D>::template extent_type<1>;
+    using index_pair_type = typename TensorTrain<V, D>::index_pair_type;
+    using extent_type = typename TensorTrain<V, D>::template extent_type<1>;
 
     extent_type cdims = {index_pair_type(1, 1)};
 
@@ -754,7 +829,6 @@ auto hadamard_product(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
             // extent of slice for result
             ext_Z = {Z.rank(i), 1, Z.rank(i + 1)};
 
-            SPDLOG_INFO("core {} mode {}", i, j);
             Z.core(i).slice(offs, ext_Z) =
                 X.core(i)
                     .slice(offs, ext_X)
@@ -763,6 +837,32 @@ auto hadamard_product(const TT<T, D> &X, const TT<U, D> &Y) -> TT<V, D> {
                     .reshape(ext_Z);
         }
     }
+
+    return Z;
+}
+
+/** Hadamard (elementwise) product of two tensor trains, with rounding.
+ *
+ * @tparam T scalar type of the left tensor train.
+ * @tparam U scalar type of the right tensor train.
+ * @tparam D number of modes in the tensor trains.
+ * @tparam V scalar type of the result tensor train.
+ * @param[in] X tensor train.
+ * @param[in] Y tensor train.
+ * @param[in] epsilon rounding threshold.
+ * @return Z the elementwise product tensor train.
+ */
+template <typename T,
+          typename U,
+          int D,
+          typename V = typename std::common_type<U, T>::type>
+auto hadamard_product(const TensorTrain<T, D> &X,
+                      const TensorTrain<U, D> &Y,
+                      V epsilon) -> TensorTrain<V, D> {
+    auto Z = hadamard_product(X, Y);
+
+    // perform rounding.
+    Z.round(epsilon);
 
     return Z;
 }

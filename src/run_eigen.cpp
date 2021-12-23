@@ -10,17 +10,19 @@
 #include "tteigen.hpp"
 #include "utils.hpp"
 
+using namespace tteigen;
+
 int main() {
     spdlog::set_pattern("[%Y-%m-%d %T][%^%l%$][TID: %t, PID: %P][%!@%s:%4#] %v");
 
-    auto A = tteigen::sample_tensor<5, 5, 5, 5, 5, 5>();
+    auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
 
     SPDLOG_INFO("size of tensor = {} elements", A.size());
     SPDLOG_INFO("memory ~ {:.2e} GiB", to_GiB<double>(A.size()));
 
     auto start = std::chrono::steady_clock::now();
 
-    auto tt_A = tteigen::TT(A);
+    auto tt_A = TensorTrain(A);
 
     auto stop = std::chrono::steady_clock::now();
     std::chrono::duration<double, std::milli> elapsed = stop - start;
