@@ -673,6 +673,41 @@ public:
 
         return full;
     }
+
+    template <typename U, typename V = typename std::common_type<T, U>::type>
+    auto inner_product(TensorTrain<U, D> &Y) -> V {
+        using matrix_X = typename TensorTrain<T, D>::matrix_type;
+        using matrix_Y = typename TensorTrain<V, D>::matrix_type;
+        using matrix_Z = Eigen::Matrix<V, Eigen::Dynamic, Eigen::Dynamic>;
+
+        using core_Z = Eigen::Tensor<V, 3>;
+
+        // the W matrices have dimension \f$R_{n}^{Y} \times R_{n}^{X}\f$
+        matrix_Z W = matrix_Z::Identity(Y.rank(0), ranks_[0]);
+
+        for (auto i = 0; i < D; ++i) {
+            // horizontal unfolding of i-th core of X
+            matrix_X H_X = Eigen::Map<matrix_X>(
+                cores_[i].data(), ranks_[i], modes_[i] * ranks_[i + 1]);
+            // define core of auxiliary tensor Z
+            matrix_Z H_Z = W * H_X;
+            // the auxiliary core has shape
+            // \f$\lbrace R_{n}^{Y}, I_{n}, R_{n+1}^{X} \rbrace\f$
+            core_Z Z = core_Z(Y.rank(i), modes_[i], ranks_[i + 1]);
+            std::copy(H_Z.data(), H_Z.data() + Z.size(), Z.data());
+
+            // vertical unfolding of i-th core of Y
+            matrix_Y V_Y = Eigen::Map<matrix_Y>(
+                Y.core(i).data(), Y.rank(i) * Y.mode(i), Y.rank(i + 1));
+            // vertical unfolding of i-th core of Z
+            matrix_Z V_Z = Eigen::Map<matrix_Z>(
+                Z.data(), Z.dimension(0) * Z.dimension(1), Z.dimension(2));
+            // update W
+            W = V_Y.transpose() * V_Z;
+        }
+
+        return W(0);
+    }
 };
 
 /** *Non-destructive* scaling by a scalar (on the left)

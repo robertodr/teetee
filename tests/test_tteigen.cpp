@@ -260,6 +260,24 @@ TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
     REQUIRE(tt_A.norm() == Approx(A_F));
 }
 
-/*
-// scalar product of two tensors
-*/
+TEST_CASE("inner product of two tensor trains", "[tt][eigen][inner]") {
+    const auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
+    const double A_F = frobenius_norm(A.data(), A.size());
+
+    using index_pair_type = Eigen::IndexPair<Eigen::Index>;
+
+    Eigen::array<index_pair_type, 6> cdims = {index_pair_type(0, 0),
+                                              index_pair_type(1, 1),
+                                              index_pair_type(2, 2),
+                                              index_pair_type(3, 3),
+                                              index_pair_type(4, 4),
+                                              index_pair_type(5, 5)};
+    Eigen::Tensor<double, 0> ref_dot = A.contract(A, cdims);
+
+    const auto epsilon = 1.0e-12;
+    auto tt_A = TensorTrain(A, epsilon);
+
+    auto dot = tt_A.inner_product(tt_A);
+
+    REQUIRE(dot == Approx(ref_dot(0)));
+}
