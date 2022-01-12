@@ -72,7 +72,7 @@ private:
     T norm_{0};
 
     /** Decomposition threshold. */
-    T epsilon_{1e-12};
+    double epsilon_{1e-12};
 
     /** Sizes of tensor modes \f$I_{n}\f$ */
     std::array<size_type, D> modes_;
@@ -282,7 +282,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TensorTrain(T *A, std::array<size_type, D> Is, T epsilon = 1e-12)
+    TensorTrain(T *A, std::array<size_type, D> Is, double epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{Is} {
@@ -322,7 +322,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TensorTrain(Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+    TensorTrain(Eigen::Tensor<T, D> &A, double epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{A.dimensions()} {
@@ -361,7 +361,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TensorTrain(const Eigen::Tensor<T, D> &A, T epsilon = 1e-12)
+    TensorTrain(const Eigen::Tensor<T, D> &A, double epsilon = 1e-12)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{A.dimensions()} {
@@ -471,7 +471,7 @@ public:
      * @note We use the block divide-and-conquer SVD algorithm, as implemented in
      * Eigen.
      */
-    void round(T epsilon) {
+    void round(double epsilon) {
         // reset epsilon_
         epsilon_ = epsilon;
 
@@ -764,7 +764,7 @@ template <typename T,
           typename U,
           int D,
           typename V = typename std::common_type<U, T>::type>
-auto sum(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y, V epsilon)
+auto sum(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y, double epsilon)
     -> TensorTrain<V, D> {
     auto Z = sum(X, Y);
 
@@ -858,7 +858,7 @@ template <typename T,
           typename V = typename std::common_type<U, T>::type>
 auto hadamard_product(const TensorTrain<T, D> &X,
                       const TensorTrain<U, D> &Y,
-                      V epsilon) -> TensorTrain<V, D> {
+                      double epsilon) -> TensorTrain<V, D> {
     auto Z = hadamard_product(X, Y);
 
     // perform rounding.
