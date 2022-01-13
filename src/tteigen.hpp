@@ -83,6 +83,22 @@ private:
      * \times I_{n} \times R_{n}}\f$ */
     std::array<core_type, D> cores_;
 
+    /** Number of rows and columns of horizontal unfolding of given core.
+     *
+     * @param[in] i index of the core
+     */
+    std::tuple<size_type, size_type> horizontal(std::size_t i) {
+        return std::make_tuple(ranks_[i], modes_[i] * ranks_[i + 1]);
+    }
+
+    /** Number of rows and columns of vertical unfolding of given core.
+     *
+     * @param[in] i index of the core
+     */
+    std::tuple<size_type, size_type> vertical(std::size_t i) {
+        return std::make_tuple(ranks_[i] * modes_[i], ranks_[i + 1]);
+    }
+
     /** Tensor train decomposition *via* successive SVDs
      *  @param[in] A dense tensor data in *natural descending order*.
      *  @param[in] delta SVD truncation threshold.
@@ -395,8 +411,7 @@ public:
         // start from last core and go down to second mode
         for (auto i = D - 1; i > 0; --i) {
             // shape of horizontal unfolding of current, i-th, core
-            auto h_rows = shapes_[i][0];
-            auto h_cols = shapes_[i][1] * shapes_[i][2];
+            auto [h_rows, h_cols] = horizontal(i);
             // *adjoint* of horizontal unfolding of current, i-th, core
             matrix_type Ht =
                 Eigen::Map<matrix_type>(cores_[i].data(), h_rows, h_cols).adjoint();
@@ -421,8 +436,7 @@ public:
                                  .template triangularView<Eigen::Upper>();
 
             // shape of vertical unfolding of next, (i-1)-th, core
-            auto v_rows = shapes_[i - 1][0] * shapes_[i - 1][1];
-            auto v_cols = shapes_[i - 1][2];
+            auto [v_rows, v_cols] = vertical(i - 1);
             // vertical unfolding of next, (i-1)-th, core times adjoint of R factor
             matrix_type next =
                 Eigen::Map<matrix_type>(cores_[i - 1].data(), v_rows, v_cols) *
@@ -619,6 +633,8 @@ public:
     /** Get shape of i-th tensor train core.
      *
      * @param[in] i requested core.
+     *
+     * Shape of tensor core i \f$\lbrace R_{i-1}, I_{i}, R_{i} \rbrace\f$
      */
     auto shape(std::size_t i) const -> shape_type { return shapes_[i]; }
 
