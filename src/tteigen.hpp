@@ -18,9 +18,6 @@
 #include "utils.hpp"
 
 namespace tteigen {
-using Clock = std::chrono::steady_clock;
-
-namespace tteigen {
 /**
  *
  *  Horizontal unfolding
