@@ -88,7 +88,7 @@ private:
      * @param[in] i index of the core
      */
     std::tuple<size_type, size_type> horizontal(std::size_t i) {
-        return std::make_tuple(ranks_[i], modes_[i] * ranks_[i + 1]);
+        return std::make_tuple(shapes_[i][0], shapes_[i][1] * shapes_[i][2]);
     }
 
     /** Number of rows and columns of vertical unfolding of given core.
@@ -96,7 +96,7 @@ private:
      * @param[in] i index of the core
      */
     std::tuple<size_type, size_type> vertical(std::size_t i) {
-        return std::make_tuple(ranks_[i] * modes_[i], ranks_[i + 1]);
+        return std::make_tuple(shapes_[i][0] * shapes_[i][1], shapes_[i][2]);
     }
 
     /** Tensor train decomposition *via* successive SVDs
@@ -139,11 +139,9 @@ private:
         auto rank = (svd.singularValues().array() >= delta).count();
         shapes_[0] = {1, modes_[0], rank};
         ranks_[1] = rank;
-        cores_[0] = core_type(shapes_[0]);
         // only take the first rank columns of U to fill cores_[0]
-        std::copy(svd.matrixU().data(),
-                  svd.matrixU().data() + cores_[0].size(),
-                  cores_[0].data());
+        Eigen::MatrixXd U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+        cores_[0] = Eigen::TensorMap<core_type>(U.data(), shapes_[0]);
         c_count_ = cores_[0].size();
 
         // prepare next unfolding: only use first rank singular values and first rank
@@ -421,30 +419,29 @@ public:
 
             // sequence of Householder reflectors
             auto hh = qr.householderQ();
-            // Q1 is the *thin* Q factor and Q1t its adjoint.
-            matrix_type Q1t = matrix_type::Identity(h_rows, h_cols);
+            // Q factor and Qt its adjoint.
+            matrix_type Qt = matrix_type::Identity(h_cols, h_cols);
             // we compute it by applying hh on the right
             // of the correctly dimensioned identity matrix
-            Q1t.applyOnTheRight(hh.adjoint());
+            Qt.applyOnTheRight(hh.adjoint());
+            shapes_[i] = {Qt.rows(), modes_[i], Qt.cols() / modes_[i]};
             // set the result to be the *adjoint* of the horizontal unfolding of
             // current, i-th, core
-            std::copy(Q1t.data(), Q1t.data() + cores_[i].size(), cores_[i].data());
+            cores_[i] = Eigen::TensorMap<core_type>(Qt.data(), shapes_[i]);
 
-            // R1 factor (*thin* R)
-            matrix_type R1 = qr.matrixQR()
-                                 .topLeftCorner(h_rows, h_rows)
-                                 .template triangularView<Eigen::Upper>();
+            // R factor is upper triangular
+            matrix_type R = qr.matrixQR().template triangularView<Eigen::Upper>();
 
             // shape of vertical unfolding of next, (i-1)-th, core
             auto [v_rows, v_cols] = vertical(i - 1);
             // vertical unfolding of next, (i-1)-th, core times adjoint of R factor
             matrix_type next =
                 Eigen::Map<matrix_type>(cores_[i - 1].data(), v_rows, v_cols) *
-                R1.adjoint();
+                R.adjoint();
+            shapes_[i - 1] = {
+                next.rows() / modes_[i - 1], modes_[i - 1], next.cols()};
             // set the result to be the vertical unfolding of the next core
-            std::copy(next.data(),
-                      next.data() + cores_[i - 1].size(),
-                      cores_[i - 1].data());
+            cores_[i - 1] = Eigen::TensorMap<core_type>(next.data(), shapes_[i - 1]);
         }
 
         is_orthonormal_ = true;
@@ -453,6 +450,7 @@ public:
         norm_ = frobenius_norm(cores_[0].data(), cores_[0].size());
         norm_computed_ = true;
     }
+
     /** Rounding of `*this` tensor train.
      *
      * @param[in] epsilon decomposition tolerance.
