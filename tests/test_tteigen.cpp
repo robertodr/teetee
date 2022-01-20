@@ -215,15 +215,15 @@ TEST_CASE("Hadamard (elementwise) product of two tensor trains, with rounding",
     REQUIRE(allclose(check, B, 0.0, 1e-12));
 }
 
-TEST_CASE("right orthonormalization of tensor train",
-          "[tt][eigen][right-orthonormalization]") {
+TEST_CASE("right-to-left orthogonalization of tensor train",
+          "[tt][eigen][orthogonalize-RL]") {
     const auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
     const double A_F = frobenius_norm(A.data(), A.size());
 
     const auto epsilon = 1.0e-12;
     auto tt_A = TensorTrain(A, epsilon);
 
-    tt_A.right_orthonormalize();
+    tt_A.orthogonalize_RL();
 
     // the reconstructed tensor
     Eigen::Tensor<double, 6> check = tt_A.to_full();
@@ -255,7 +255,7 @@ TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
     const auto epsilon = 1.0e-12;
     auto tt_A = TensorTrain(A, epsilon);
 
-    tt_A.right_orthonormalize();
+    tt_A.orthogonalize_RL();
 
     REQUIRE(tt_A.norm() == Approx(A_F));
 }

@@ -176,12 +176,10 @@ private:
             rank = (svd.singularValues().array() >= delta).count();
             shapes_[K] = {ranks_[K], modes_[K], rank};
             ranks_[K + 1] = rank;
-            cores_[K] = core_type(shapes_[K]);
-            c_count_ += cores_[K].size();
             // only take the first rank columns of U to fill cores_[K]
-            std::copy(svd.matrixU().data(),
-                      svd.matrixU().data() + cores_[K].size(),
-                      cores_[K].data());
+            U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+            cores_[K] = Eigen::TensorMap<core_type>(U.data(), shapes_[K]);
+            c_count_ += cores_[K].size();
 
             // prepare next unfolding: only use first rank singular values and first
             // rank columns of V
@@ -405,7 +403,7 @@ public:
      *
      * @note We use the Householder QR algorithm, as implemented in Eigen.
      */
-    void right_orthonormalize() {
+    void orthogonalize_RL() {
         // start from last core and go down to second mode
         for (auto i = D - 1; i > 0; --i) {
             // shape of horizontal unfolding of current, i-th, core
@@ -488,7 +486,7 @@ public:
         // a. either we are rounding right after decomposing (bit pointless, but...),
         // b. or *this is already right-orthonormalized
         // if not, right-orhtonormalize and compute the norm.
-        if (!norm_computed_ || !is_orthonormal_) { right_orthonormalize(); }
+        if (!norm_computed_ || !is_orthonormal_) { orthogonalize_RL(); }
         auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
         SPDLOG_INFO("SVD threshold = {:6e}", delta);
 
@@ -606,7 +604,7 @@ public:
      * compute the norm!
      */
     auto norm() -> T {
-        if (!norm_computed_ || !is_orthonormal_) { right_orthonormalize(); }
+        if (!norm_computed_ || !is_orthonormal_) { orthogonalize_RL(); }
         return norm_;
     }
 
