@@ -219,9 +219,9 @@ private:
     auto to_full(const Eigen::Tensor<T, mode + 1> &pre,
                  Eigen::Tensor<T, D> &full) const -> void {
         static_assert(mode >= 2, "mode must be at least two at this point!");
-        extent_type<1> cdims = {index_pair_type(mode, 0)};
+        extent_type<1> c_axes = {index_pair_type(mode, 0)};
 
-        Eigen::Tensor<T, mode + 2> post = pre.contract(cores_[mode], cdims);
+        Eigen::Tensor<T, mode + 2> post = pre.contract(cores_[mode], c_axes);
 
         to_full<mode + 1>(post, full);
     }
@@ -235,11 +235,11 @@ private:
     template <>
     auto to_full<D - 1>(const Eigen::Tensor<T, D> &pre,
                         Eigen::Tensor<T, D> &full) const -> void {
-        extent_type<1> cdims = {index_pair_type(D - 1, 0)};
+        extent_type<1> c_axes = {index_pair_type(D - 1, 0)};
 
         // the contraction would be an Eigen::Tensor<T, D+1>, with last mode of size
         // 1, hence the chipping.
-        full = pre.contract(cores_[D - 1], cdims).chip(0, D);
+        full = pre.contract(cores_[D - 1], c_axes).chip(0, D);
     }
     /*\@}*/
 
@@ -469,11 +469,11 @@ public:
                 Rt = R.adjoint();
             }
 
-            extent_type<1> cdims = {index_pair_type(2, 0)};
+            extent_type<1> c_axes = {index_pair_type(2, 0)};
             core_type next =
                 cores_[i - 1].contract(Eigen::TensorMap<Eigen::Tensor<T, 2>>(
                                            Rt.data(), Rt.rows(), Rt.cols()),
-                                       cdims);
+                                       c_axes);
             cores_[i - 1] = next;
         }
 
@@ -708,9 +708,10 @@ public:
     auto to_full() const -> Eigen::Tensor<T, D> {
         Eigen::Tensor<T, D> full(modes_);
 
-        extent_type<1> cdims = {index_pair_type(1, 0)};
+        extent_type<1> c_axes = {index_pair_type(1, 0)};
         // contract dimension 1 of first chipped core with dimension 0 of second core
-        Eigen::Tensor<T, 3> post = (cores_[0].chip(0, 0)).contract(cores_[1], cdims);
+        Eigen::Tensor<T, 3> post =
+            (cores_[0].chip(0, 0)).contract(cores_[1], c_axes);
 
         // recursion
         to_full<2>(post, full);
@@ -720,36 +721,38 @@ public:
 
     template <typename U, typename V = typename std::common_type<T, U>::type>
     auto inner_product(TensorTrain<U, D> &Y) -> V {
-        using matrix_X = typename TensorTrain<T, D>::matrix_type;
-        using matrix_Y = typename TensorTrain<V, D>::matrix_type;
-        using matrix_Z = Eigen::Matrix<V, Eigen::Dynamic, Eigen::Dynamic>;
-
-        using core_Z = Eigen::Tensor<V, 3>;
+        using core = Eigen::Tensor<V, 3>;
 
         // the W matrices have dimension \f$R_{n}^{Y} \times R_{n}^{X}\f$
-        matrix_Z W = matrix_Z::Identity(Y.rank(0), ranks_[0]);
+        // the first such matrix is the identity
+        Eigen::Matrix<V, Eigen::Dynamic, Eigen::Dynamic> Id;
+        Id.setIdentity(Y.rank(0), this->rank(0));
+        // we handle them as 2-mode tensors, because it's more convenient to use the
+        // contraction API (and let Eigen decide how to dispatch them to GEMMs)
+        using matrix = Eigen::Tensor<V, 2>;
+        matrix W = Eigen::TensorMap<matrix>(Id.data(), Id.rows(), Id.cols());
 
         for (auto i = 0; i < D; ++i) {
-            // horizontal unfolding of i-th core of X
-            matrix_X H_X = Eigen::Map<matrix_X>(
-                cores_[i].data(), ranks_[i], modes_[i] * ranks_[i + 1]);
-            // define core of auxiliary tensor Z
-            matrix_Z H_Z = W * H_X;
-            // the auxiliary core has shape
+            // define core of auxiliary tensor Z with shape
             // \f$\lbrace R_{n}^{Y}, I_{n}, R_{n+1}^{X} \rbrace\f$
-            core_Z Z = core_Z(Y.rank(i), modes_[i], ranks_[i + 1]);
-            std::copy(H_Z.data(), H_Z.data() + Z.size(), Z.data());
+            // this is the mode-0 product of the i-th core with the W matrix
+            extent_type<1> c_axes_Z = {index_pair_type(0, 0)};
+            // in Eigen, contractions only need contraction axes as input: the
+            // uncontracted axes might be laid out arbitrarily. We thus need a
+            // shuffle after contraction to dimension the auxiliary core properly.
+            Eigen::array<size_type, 3> shuffle = {2, 0, 1};
+            core Z = cores_[i].contract(W, c_axes_Z).shuffle(shuffle);
 
-            // vertical unfolding of i-th core of Y
-            matrix_Y V_Y = Eigen::Map<matrix_Y>(
-                Y.core(i).data(), Y.rank(i) * Y.mode(i), Y.rank(i + 1));
-            // vertical unfolding of i-th core of Z
-            matrix_Z V_Z = Eigen::Map<matrix_Z>(
-                Z.data(), Z.dimension(0) * Z.dimension(1), Z.dimension(2));
-            // update W
-            W = V_Y.transpose() * V_Z;
+            // update the W matrix as the mode-0 and mode-2 contraction of the Y and
+            // Z cores
+            // this is equivalent to the product: V_Y^t * V_Z, where V means vertical
+            // unfolding
+            extent_type<2> c_axes_W = {index_pair_type(0, 0), index_pair_type(1, 1)};
+            W = Y.core(i).contract(Z, c_axes_W);
         }
 
+        // the value of the inner product is the only element of the final 1x1 W
+        // matrix
         return W(0);
     }
 };
@@ -886,7 +889,7 @@ auto hadamard_product(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y)
     using index_pair_type = typename TensorTrain<V, D>::index_pair_type;
     using extent_type = typename TensorTrain<V, D>::template extent_type<1>;
 
-    extent_type cdims = {index_pair_type(1, 1)};
+    extent_type c_axes = {index_pair_type(1, 1)};
 
     //  offset of slices
     Eigen::array<size_type, 3> offs;
@@ -911,7 +914,7 @@ auto hadamard_product(const TensorTrain<T, D> &X, const TensorTrain<U, D> &Y)
             Z.core(i).slice(offs, ext_Z) =
                 X.core(i)
                     .slice(offs, ext_X)
-                    .contract(Y.core(i).slice(offs, ext_Y), cdims)
+                    .contract(Y.core(i).slice(offs, ext_Y), c_axes)
                     .shuffle(shuffle)
                     .reshape(ext_Z);
         }
