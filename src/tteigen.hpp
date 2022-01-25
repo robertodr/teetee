@@ -73,12 +73,15 @@ private:
 
     /** Sizes of tensor modes \f$I_{n}\f$ */
     std::array<size_type, D> modes_;
+
     /** Ranks of tensor cores \f$R_{n}\f$ */
     std::array<size_type, D + 1> ranks_;
+
     /** Shapes of tensor cores \f$\lbrace R_{n-1}, I_{n}, R_{n} \rbrace\f$
      * @note \f$R_{0} = 1 = R_{n}\f$
      */
     std::array<shape_type, D> shapes_;
+
     /** Tensor train cores: \f$\mathcal{T}_{\mathcal{X}, n} \in \mathbb{K}^{R_{n-1}
      * \times I_{n} \times R_{n}}\f$ */
     std::array<core_type, D> cores_;
@@ -137,11 +140,13 @@ private:
 
         // define ranks and cores
         auto rank = (svd.singularValues().array() >= delta).count();
-        shapes_[0] = {1, modes_[0], rank};
         ranks_[1] = rank;
+        // TODO remove
+        shapes_[0] = {ranks_[0], modes_[0], ranks_[1]};
         // only take the first rank columns of U to fill cores_[0]
         Eigen::MatrixXd U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
-        cores_[0] = Eigen::TensorMap<core_type>(U.data(), shapes_[0]);
+        cores_[0] = Eigen::TensorMap<core_type>(
+            U.data(), shape_type{ranks_[0], modes_[0], ranks_[1]});
         c_count_ = cores_[0].size();
 
         // prepare next unfolding: only use first rank singular values and first rank
@@ -174,11 +179,13 @@ private:
 
             // define ranks and cores
             rank = (svd.singularValues().array() >= delta).count();
-            shapes_[K] = {ranks_[K], modes_[K], rank};
             ranks_[K + 1] = rank;
+            // TODO remove
+            shapes_[K] = {ranks_[K], modes_[K], ranks_[K + 1]};
             // only take the first rank columns of U to fill cores_[K]
             U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
-            cores_[K] = Eigen::TensorMap<core_type>(U.data(), shapes_[K]);
+            cores_[K] = Eigen::TensorMap<core_type>(
+                U.data(), shape_type{ranks_[K], modes_[K], rank});
             c_count_ += cores_[K].size();
 
             // prepare next unfolding: only use first rank singular values and first
@@ -187,16 +194,16 @@ private:
                    svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).adjoint();
         }
 
+        // TODO remove
         shapes_[D - 1] = {ranks_[D - 1], modes_[D - 1], ranks_[D]};
-        cores_[D - 1] = core_type(shapes_[D - 1]);
-        c_count_ += cores_[D - 1].size();
         // fill cores_[D-1]
         start = Clock::now();
-        std::copy(
-            next.data(), next.data() + cores_[D - 1].size(), cores_[D - 1].data());
+        cores_[D - 1] = Eigen::TensorMap<core_type>(
+            next.data(), shape_type{ranks_[D - 1], modes_[D - 1], ranks_[D]});
         stop = Clock::now();
         elapsed = stop - start;
         SPDLOG_INFO("SVD decomposition of mode {} in {}", D - 1, elapsed);
+        c_count_ += cores_[D - 1].size();
     }
 
     /*\@{ Recursive tensor train reconstruction to full format. */
@@ -244,25 +251,41 @@ public:
      *  @param[in] Is array of modes.
      *  @param[in] Rs array of ranks.
      */
-    TensorTrain(std::array<size_type, D> Is, std::array<size_type, D + 1> Rs)
+    TensorTrain(const std::array<size_type, D> &Is,
+                const std::array<size_type, D + 1> &Rs)
             : modes_(Is)
             , ranks_(Rs) {
         for (auto K = 0; K < D; ++K) {
             shapes_[K] = {ranks_[K], modes_[K], ranks_[K + 1]};
-            cores_[K] = core_type(shapes_[K]).setZero();
+            cores_[K] =
+                core_type(shape_type{ranks_[K], modes_[K], ranks_[K + 1]}).setZero();
         }
     }
 
     /** Zero-initialize a tensor train from given shapes.
      *  @param[in] Ss array of shapes.
      */
-    explicit TensorTrain(std::array<size_type, D> Ss)
+    explicit TensorTrain(const std::array<shape_type, D> &Ss)
             : shapes_(Ss) {
         for (auto K = 0; K < D; ++K) {
             ranks_[K] = shapes_[K][0];
             modes_[K] = shapes_[K][1];
             ranks_[K + 1] = shapes_[K][2];
             cores_[K] = core_type(shapes_[K]).setZero();
+        }
+    }
+
+    /** Initialize a tensor train from given cores.
+     *  @param[in] Cs array of cores.
+     *  @note This is mainly useful for testing.
+     */
+    explicit TensorTrain(const std::array<core_type, D> &Cs)
+            : cores_(Cs) {
+        for (auto K = 0; K < D; ++K) {
+            shapes_[K] = cores_[K].dimensions();
+            ranks_[K] = shapes_[K][0];
+            modes_[K] = shapes_[K][1];
+            ranks_[K + 1] = shapes_[K][2];
         }
     }
 
@@ -408,6 +431,8 @@ public:
         for (auto i = D - 1; i > 0; --i) {
             // shape of horizontal unfolding of current, i-th, core
             auto [h_rows, h_cols] = horizontal(i);
+            // whether to do thin or full QR
+            bool do_thin_qr = (h_cols >= h_rows);
             // *adjoint* of horizontal unfolding of current, i-th, core
             matrix_type Ht =
                 Eigen::Map<matrix_type>(cores_[i].data(), h_rows, h_cols).adjoint();
@@ -417,8 +442,13 @@ public:
 
             // sequence of Householder reflectors
             auto hh = qr.householderQ();
-            // Q factor and Qt its adjoint.
-            matrix_type Qt = matrix_type::Identity(h_cols, h_cols);
+            // Qt is the adjoint of the Q factor (orthogonal)
+            matrix_type Qt;
+            if (do_thin_qr) {
+                Qt = matrix_type::Identity(h_rows, h_cols);
+            } else {
+                Qt = matrix_type::Identity(h_cols, h_cols);
+            }
             // we compute it by applying hh on the right
             // of the correctly dimensioned identity matrix
             Qt.applyOnTheRight(hh.adjoint());
@@ -427,19 +457,24 @@ public:
             // current, i-th, core
             cores_[i] = Eigen::TensorMap<core_type>(Qt.data(), shapes_[i]);
 
-            // R factor is upper triangular
-            matrix_type R = qr.matrixQR().template triangularView<Eigen::Upper>();
+            // Rt is the adjoint of the R factor (upper triangular)
+            matrix_type Rt;
+            if (do_thin_qr) {
+                auto R = qr.matrixQR()
+                             .topLeftCorner(h_rows, h_rows)
+                             .template triangularView<Eigen::Upper>();
+                Rt = R.adjoint();
+            } else {
+                auto R = qr.matrixQR().template triangularView<Eigen::Upper>();
+                Rt = R.adjoint();
+            }
 
-            // shape of vertical unfolding of next, (i-1)-th, core
-            auto [v_rows, v_cols] = vertical(i - 1);
-            // vertical unfolding of next, (i-1)-th, core times adjoint of R factor
-            matrix_type next =
-                Eigen::Map<matrix_type>(cores_[i - 1].data(), v_rows, v_cols) *
-                R.adjoint();
-            shapes_[i - 1] = {
-                next.rows() / modes_[i - 1], modes_[i - 1], next.cols()};
-            // set the result to be the vertical unfolding of the next core
-            cores_[i - 1] = Eigen::TensorMap<core_type>(next.data(), shapes_[i - 1]);
+            extent_type<1> cdims = {index_pair_type(2, 0)};
+            core_type next =
+                cores_[i - 1].contract(Eigen::TensorMap<Eigen::Tensor<T, 2>>(
+                                           Rt.data(), Rt.rows(), Rt.cols()),
+                                       cdims);
+            cores_[i - 1] = next;
         }
 
         is_orthonormal_ = true;

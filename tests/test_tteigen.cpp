@@ -215,25 +215,48 @@ TEST_CASE("Hadamard (elementwise) product of two tensor trains, with rounding",
     REQUIRE(allclose(check, B, 0.0, 1e-12));
 }
 
-TEST_CASE("right-to-left orthogonalization of tensor train",
-          "[tt][eigen][orthogonalize-RL]") {
-    const auto A = sample_tensor<5, 5, 5, 5, 5, 5>();
-    const double A_F = frobenius_norm(A.data(), A.size());
+TEST_CASE("right-to-left orthogonalization of tensor train, with thin QR",
+          "[tt][eigen][orthogonalize-RL][thin-QR]") {
+    using shape_type = typename TensorTrain<double, 6>::shape_type;
+    using core_type = typename TensorTrain<double, 6>::core_type;
+    std::array<core_type, 6> cores = {core_type(shape_type{1, 5, 4}).setRandom(),
+                                      core_type(shape_type{4, 8, 2}).setRandom(),
+                                      core_type(shape_type{2, 5, 3}).setRandom(),
+                                      core_type(shape_type{3, 6, 4}).setRandom(),
+                                      core_type(shape_type{4, 6, 4}).setRandom(),
+                                      core_type(shape_type{4, 10, 1}).setRandom()};
 
-    const auto epsilon = 1.0e-12;
-    auto tt_A = TensorTrain(A, epsilon);
+    auto tt_A = TensorTrain<double, 6>(cores);
 
     tt_A.orthogonalize_RL();
 
-    // the reconstructed tensor
-    Eigen::Tensor<double, 6> check = tt_A.to_full();
+    // test that all horizontal unfoldings of cores >= 1 are row orthonormal
+    using matrix_type = typename TensorTrain<double, 6>::matrix_type;
+    for (auto i = 1; i < 6; ++i) {
+        auto c = tt_A.core(i);
+        // horizontal unfolding
+        auto n_rows = c.dimension(0);
+        auto n_cols = c.dimension(1) * c.dimension(2);
+        matrix_type H = Eigen::Map<matrix_type>(c.data(), n_rows, n_cols);
 
-    Eigen::Tensor<double, 0> tmp = (check - A).square().sum().sqrt();
-    const double check_norm = tmp.coeff();
+        REQUIRE(allclose(H * H.adjoint(), matrix_type::Identity(n_rows, n_rows)));
+    }
+}
 
-    REQUIRE(check_norm <= epsilon * A_F);
+TEST_CASE("right-to-left orthogonalization of tensor train, with regular QR",
+          "[tt][eigen][orthogonalize-RL][regular-QR]") {
+    using shape_type = typename TensorTrain<double, 6>::shape_type;
+    using core_type = typename TensorTrain<double, 6>::core_type;
+    std::array<core_type, 6> cores = {core_type(shape_type{1, 5, 4}).setRandom(),
+                                      core_type(shape_type{4, 8, 2}).setRandom(),
+                                      core_type(shape_type{2, 5, 3}).setRandom(),
+                                      core_type(shape_type{3, 6, 4}).setRandom(),
+                                      core_type(shape_type{4, 6, 4}).setRandom(),
+                                      core_type(shape_type{25, 10, 1}).setRandom()};
 
-    REQUIRE(allclose(check, A, 0.0, 1e-12));
+    auto tt_A = TensorTrain<double, 6>(cores);
+
+    tt_A.orthogonalize_RL();
 
     // test that all horizontal unfoldings of cores >= 1 are row orthonormal
     using matrix_type = typename TensorTrain<double, 6>::matrix_type;
