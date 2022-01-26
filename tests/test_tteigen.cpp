@@ -228,6 +228,9 @@ TEST_CASE("right-to-left orthogonalization of tensor train, with thin QR",
 
     auto tt_A = TensorTrain<double, 6>(cores);
 
+    // reconstruct full tensor *before* orthogonalization
+    const Eigen::Tensor<double, 6> A = tt_A.to_full();
+
     tt_A.orthogonalize_RL();
 
     // test that all horizontal unfoldings of cores >= 1 are row orthonormal
@@ -241,6 +244,11 @@ TEST_CASE("right-to-left orthogonalization of tensor train, with thin QR",
 
         REQUIRE(allclose(H * H.adjoint(), matrix_type::Identity(n_rows, n_rows)));
     }
+
+    // reconstruct full tensor *after* orthogonalization
+    const Eigen::Tensor<double, 6> orth_A = tt_A.to_full();
+
+    REQUIRE(allclose(A, orth_A, 0.0, 1e-12));
 }
 
 TEST_CASE("right-to-left orthogonalization of tensor train, with regular QR",
@@ -256,6 +264,9 @@ TEST_CASE("right-to-left orthogonalization of tensor train, with regular QR",
 
     auto tt_A = TensorTrain<double, 6>(cores);
 
+    // reconstruct full tensor *before* orthogonalization
+    const Eigen::Tensor<double, 6> A = tt_A.to_full();
+
     tt_A.orthogonalize_RL();
 
     // test that all horizontal unfoldings of cores >= 1 are row orthonormal
@@ -269,6 +280,11 @@ TEST_CASE("right-to-left orthogonalization of tensor train, with regular QR",
 
         REQUIRE(allclose(H * H.adjoint(), matrix_type::Identity(n_rows, n_rows)));
     }
+
+    // reconstruct full tensor *after* orthogonalization
+    const Eigen::Tensor<double, 6> orth_A = tt_A.to_full();
+
+    REQUIRE(allclose(A, orth_A, 0.0, 1e-12));
 }
 
 TEST_CASE("Frobenius norm of tensor train", "[tt][eigen][frobenius]") {
