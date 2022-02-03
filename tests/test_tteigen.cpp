@@ -31,6 +31,23 @@ TEST_CASE("tensor train format with SVD", "[tt][eigen][svd]") {
     REQUIRE(allclose(check, A, 0.0, 1e-12));
 }
 
+TEST_CASE("tensor train format with randomized SVD", "[tt][eigen][rsvd]") {
+    auto A = sample_tensor<25, 25, 5, 10, 12, 18>();
+    double A_F = frobenius_norm(A.data(), A.size());
+
+    auto tt_A = TensorTrain(A);
+
+    // the reconstructed tensor
+    Eigen::Tensor<double, 6> check = tt_A.to_full();
+
+    Eigen::Tensor<double, 0> tmp = (check - A).square().sum().sqrt();
+    double check_norm = tmp.coeff();
+
+    REQUIRE(check_norm <= 1e-12 * A_F);
+
+    REQUIRE(allclose(check, A, 0.0, 1e-12));
+}
+
 TEST_CASE("right-to-left orthogonalization of tensor train, with thin QR",
           "[tt][eigen][orthogonalize-RL][thin-QR]") {
     using shape_type = typename TensorTrain<double, 6>::shape_type;

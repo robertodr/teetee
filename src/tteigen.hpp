@@ -132,7 +132,7 @@ private:
         // define rank
         auto rank = (svd.singularValues().array() >= delta).count();
         // only take the first rank columns of U to fill cores_[0]
-        Eigen::MatrixXd U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+        matrix_type U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
         cores_[0] =
             Eigen::TensorMap<core_type>(U.data(), shape_type{1, modes_[0], rank});
 
@@ -176,6 +176,81 @@ private:
             // rank columns of V
             SigmaVh = svd.singularValues().head(rank).asDiagonal() *
                       svd.matrixV()(Eigen::all, Eigen::seqN(0, rank)).adjoint();
+        }
+
+        // fill cores_[D-1]
+        start = Clock::now();
+        cores_[D - 1] = Eigen::TensorMap<core_type>(
+            SigmaVh.data(), shape_type{rank, modes_[D - 1], 1});
+        stop = Clock::now();
+        elapsed = stop - start;
+        SPDLOG_INFO("SVD decomposition of mode {} in {}", D - 1, elapsed);
+    }
+
+    /** Tensor train decomposition *via* successive randomized SVDs.
+     *
+     *  @param[in] A dense tensor data in *natural descending order*.
+     *  @param[in] sz size of dense tensor A.
+     *
+     * This is an implementation of algorithm 1 in: Oseledets, I. V. Tensor-Train
+     * Decomposition. SIAM J. Sci. Comput. 2011, 33 (5), 2295–2317.
+     * https://doi.org/10.1137/090752286.
+     *
+     * @note We use the randomized SVD algorithm:
+     * Halko, N.; Martinsson, P. G.; Tropp, J. A. Finding Structure with Randomness:
+     * Probabilistic Algorithms for Constructing Approximate Matrix Decompositions.
+     * SIAM Rev. 2011, 53 (2), 217–288. https://doi.org/10.1137/090771806.
+     */
+    void decompose(T *A, size_type sz) {
+        using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+
+        // prepare first horizontal unfolding
+        auto n_rows = modes_[0];
+        auto rank = 2;
+        auto n_cols = sz / n_rows;
+
+        // wrap tensor data into a matrix
+        Eigen::Map<matrix_type> M(A, n_rows, n_cols);
+
+        // compute SVD of unfolding
+        auto start = Clock::now();
+        auto [U, Sigma, V] = randomized_svd(M, rank);
+        auto stop = Clock::now();
+        std::chrono::duration<double, std::milli> elapsed = stop - start;
+
+        SPDLOG_INFO("Randomized SVD decomposition of mode {} in {}", 0, elapsed);
+
+        // update cores
+        cores_[0] =
+            Eigen::TensorMap<core_type>(U.data(), shape_type{1, modes_[0], rank});
+
+        // prepare next unfolding: only use first rank singular values and first rank
+        // columns of V
+        matrix_type SigmaVh = Sigma * V.adjoint();
+
+        // go through the modes (dimensions) in the tensor
+        for (int K = 1; K < D - 1; ++K) {
+            // sizes of tensor unfoldings
+            n_rows = modes_[K];
+            n_cols /= n_rows;
+            // construct unfolding (into memory being held by M)
+            new (&M) Eigen::Map<matrix_type>(SigmaVh.data(), rank * n_rows, n_cols);
+            // compute SVD of unfolding
+            // rank = modes_[K] / 2;
+            start = Clock::now();
+            auto [U, Sigma, V] = randomized_svd(M, rank);
+            stop = Clock::now();
+            elapsed = stop - start;
+            SPDLOG_INFO("Randomized SVD decomposition of mode {} in {}", K, elapsed);
+
+            // update cores
+            cores_[K] = Eigen::TensorMap<core_type>(
+                U.data(),
+                shape_type{U.size() / (modes_[K] * rank), modes_[K], rank});
+
+            // prepare next unfolding: only use first rank singular values and first
+            // rank columns of V
+            SigmaVh = Sigma * V.adjoint();
         }
 
         // fill cores_[D-1]
@@ -261,6 +336,7 @@ public:
 
     /** *Destructively* generate a tensor train from given data, modes, and
      * tolerance.
+     *
      *  @param[in] A dense tensor data in *natural descending order*
      *  @param[in] Is array of modes.
      *  @param[in] epsilon decomposition tolerance.
@@ -284,18 +360,49 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TensorTrain(T *A, std::array<size_type, D> Is, double epsilon = 1e-12)
+    TensorTrain(T *A, std::array<size_type, D> Is, double epsilon)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{Is} {
         auto sz = std::accumulate(
-            modes_.cbegin(), modes_.cend(), std::multiplies<size_type>(), 1);
+            modes_.cbegin(), modes_.cend(), 1, std::multiplies<size_type>());
         // compute norm of input tensor
         norm_ = frobenius_norm(A, sz);
 
         auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
 
         decompose(A, sz, delta);
+    }
+
+    /** *Destructively* generate a tensor train from given data and modes, through
+     * successive randomized SVDs.
+     *
+     *  @param[in] A dense tensor data in *natural descending order*
+     *  @param[in] Is array of modes.
+     *
+     *
+     *  Given a full tensor \f$\mathcal{X}\f$ and its TT decomposition
+     * \f$\bar{\mathcal{X}}\f$, the latter is constructed such that:
+     *
+     *  \f[
+     *     \| \mathcal{X} - \tilde{\mathcal{X}} \| \leq \epsilon \| \mathcal{X} \|
+     *  \f]
+     *
+     *  where \f$\tilde{\mathcal{X}}\f$ is the reconstructed full tensor and
+     *  \f$\| \cdot \|\f$ the Frobenius norm.
+     *
+     *  @warning The dense tensor data is assumed to be in natural descending
+     *  order. This is critical for the tensor train SVD algorithm to work correctly.
+     */
+    TensorTrain(T *A, std::array<size_type, D> Is)
+            : norm_computed_{true}
+            , modes_{Is} {
+        auto sz = std::accumulate(
+            modes_.cbegin(), modes_.cend(), 1, std::multiplies<size_type>());
+        // compute norm of input tensor
+        norm_ = frobenius_norm(A, sz);
+
+        decompose(A, sz);
     }
 
     /** *Destructively* generate a tensor train from given tensor and tolerance.
@@ -356,7 +463,7 @@ public:
      *  @warning The dense tensor data is assumed to be in natural descending
      *  order. This is critical for the tensor train SVD algorithm to work correctly.
      */
-    TensorTrain(const Eigen::Tensor<T, D> &A, double epsilon = 1e-12)
+    TensorTrain(const Eigen::Tensor<T, D> &A, double epsilon)
             : norm_computed_{true}
             , epsilon_{epsilon}
             , modes_{A.dimensions()} {
@@ -370,6 +477,28 @@ public:
         auto delta = epsilon_ * norm_ / std::sqrt(D - 1);
 
         decompose(B.data(), B.size(), delta);
+    }
+
+    /** *Non-destructively* generate a tensor train from given tensor, through
+     * successive randomized SVDs.
+     *
+     *  @param[in] A dense tensor data in *natural descending order*
+     *  @param[in] epsilon decomposition tolerance.
+     *
+     *  @warning The dense tensor data is assumed to be in natural descending
+     *  order. This is critical for the tensor train SVD algorithm to work correctly.
+     */
+    TensorTrain(const Eigen::Tensor<T, D> &A)
+            : norm_computed_{true}
+            , modes_{A.dimensions()} {
+        // take copy of input tensor, so the tensor train is generated
+        // non-destructively.
+        Eigen::Tensor<T, D> B = A;
+
+        // compute norm of input tensor
+        norm_ = frobenius_norm(B.data(), B.size());
+
+        decompose(B.data(), B.size());
     }
     /*\@}*/
 
@@ -513,7 +642,7 @@ public:
             // define rank and cores
             auto rank = (svd.singularValues().array() >= delta).count();
             // only take the first rank columns of U to fill cores_[i]
-            Eigen::MatrixXd U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
+            matrix_type U = svd.matrixU()(Eigen::all, Eigen::seqN(0, rank));
             cores_[i] = Eigen::TensorMap<core_type>(
                 U.data(),
                 shape_type{U.size() / (modes_[i] * rank), modes_[i], rank});

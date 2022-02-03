@@ -1,6 +1,10 @@
 #pragma once
 
+#include <random>
+
 #include <Eigen/Core>
+#include <Eigen/QR>
+#include <Eigen/SVD>
 #include <unsupported/Eigen/CXX11/Tensor>
 
 #include "utils.hpp"
@@ -45,5 +49,52 @@ auto sample_tensor() -> Eigen::Tensor<double, N> {
     Eigen::TensorMap<Eigen::Tensor<double, N>> A(buffer, dimensions);
 
     return A;
+}
+
+template <typename Derived>
+auto randomized_svd(const Eigen::MatrixBase<Derived> &A,
+                    size_t rank,
+                    size_t n_oversamples = 0)
+    -> std::tuple<
+        Eigen::Matrix<typename Derived::Scalar, Eigen::Dynamic, Eigen::Dynamic>,
+        Eigen::Vector<typename Derived::Scalar, Eigen::Dynamic>,
+        Eigen::Matrix<typename Derived::Scalar, Eigen::Dynamic, Eigen::Dynamic>> {
+
+    using T = typename Derived::Scalar;
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    using vector_type = Eigen::Vector<T, Eigen::Dynamic>;
+
+    auto n_samples = (n_oversamples > 0) ? rank + n_oversamples : 2 * rank;
+
+    // stage A: find approximate range of X
+
+    std::random_device rd{};
+    std::mt19937 gen{rd()};
+    std::normal_distribution<T> d{T{0}, T{1}};
+    auto normal = [&]() { return d(gen); };
+    matrix_type O = matrix_type::NullaryExpr(A.cols(), n_samples, normal);
+    matrix_type Y = A * O;
+
+    // orthonormalize
+    Eigen::HouseholderQR<Eigen::Ref<matrix_type>> qr(Y);
+    auto hh = qr.householderQ();
+    matrix_type Q = matrix_type::Identity(Y.rows(), Y.rows());
+    Q.applyOnTheLeft(hh);
+
+    // stage B: SVD
+
+    matrix_type B = Q.adjoint() * A;
+    auto svd = B.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+
+    if (svd.info() != Eigen::Success) {
+        SPDLOG_ERROR("SVD decomposition did not succeed!");
+        std::abort();
+    }
+
+    matrix_type U = (Q * svd.matrixU())(Eigen::all, Eigen::seqN(0, rank));
+    vector_type Sigma = svd.singularValues().head(rank);
+    matrix_type V = svd.matrixV()(Eigen::all, Eigen::seqN(0, rank));
+
+    return {U, Sigma, V};
 }
 } // namespace tteigen
